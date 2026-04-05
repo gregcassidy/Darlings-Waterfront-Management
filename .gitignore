@@ -1,0 +1,13 @@
+.env
+node_modules/
+infrastructure/cdk.out/
+infrastructure/*.js
+infrastructure/*.d.ts
+infrastructure/lib/*.js
+infrastructure/lib/*.d.ts
+infrastructure/bin/*.js
+infrastructure/bin/*.d.ts
+infrastructure/lambda/**/*.js
+infrastructure/lambda/**/*.d.ts
+!infrastructure/lambda/**/*.test.js
+.claude/settings.local.json

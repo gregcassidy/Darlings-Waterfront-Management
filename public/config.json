@@ -1,0 +1,5 @@
+{
+  "apiUrl": "REPLACE_AFTER_DEPLOY",
+  "azureTenantId": "REPLACE_WITH_TENANT_ID",
+  "azureClientId": "REPLACE_WITH_CLIENT_ID"
+}
