@@ -2,7 +2,6 @@
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
 import { DatabaseStack } from '../lib/database-stack';
-import { StorageStack } from '../lib/storage-stack';
 import { ApiStack } from '../lib/api-stack';
 import { FrontendStack } from '../lib/frontend-stack';
 
@@ -14,13 +13,11 @@ const env = {
 };
 
 const dbStack = new DatabaseStack(app, 'DarlingsWaterfrontDbStack', { env });
-const storageStack = new StorageStack(app, 'DarlingsWaterfrontStorageStack', { env });
 const apiStack = new ApiStack(app, 'DarlingsWaterfrontApiStack', {
   env,
   tables: dbStack.tables,
 });
-new FrontendStack(app, 'DarlingsWaterfrontFrontendStack', {
-  env,
-  bucket: storageStack.bucket,
-  api: apiStack.api,
-});
+new FrontendStack(app, 'DarlingsWaterfrontFrontendStack', { env });
+
+// Suppress unused variable warning — apiStack.api available for future cross-stack use
+void apiStack;

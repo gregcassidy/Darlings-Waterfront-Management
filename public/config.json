@@ -1,5 +1,5 @@
 {
-  "apiUrl": "REPLACE_AFTER_DEPLOY",
+  "apiUrl": "https://r7wuhspii5.execute-api.us-east-1.amazonaws.com/prod",
   "azureTenantId": "REPLACE_WITH_TENANT_ID",
   "azureClientId": "REPLACE_WITH_CLIENT_ID"
 }

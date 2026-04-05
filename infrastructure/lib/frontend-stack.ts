@@ -2,23 +2,26 @@ import * as cdk from 'aws-cdk-lib';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import { Construct } from 'constructs';
 
-interface FrontendStackProps extends cdk.StackProps {
-  bucket: s3.Bucket;
-  api: apigateway.RestApi;
-}
-
+// Combines S3 bucket + CloudFront in one stack to avoid OAC cross-stack circular dependency
 export class FrontendStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props: FrontendStackProps) {
+  public readonly bucket: s3.Bucket;
+
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
+
+    this.bucket = new s3.Bucket(this, 'Frontend', {
+      bucketName: `darlings-waterfront-frontend-119002863133`,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
 
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: 'DarlingsWaterfront',
       defaultRootObject: 'index.html',
       defaultBehavior: {
-        origin: origins.S3BucketOrigin.withOriginAccessControl(props.bucket),
+        origin: origins.S3BucketOrigin.withOriginAccessControl(this.bucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
       },
@@ -33,6 +36,9 @@ export class FrontendStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, 'DistributionId', {
       value: distribution.distributionId,
+    });
+    new cdk.CfnOutput(this, 'BucketName', {
+      value: this.bucket.bucketName,
     });
   }
 }

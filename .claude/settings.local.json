@@ -65,7 +65,23 @@
       "Bash(for fn:*)",
       "Bash(aws acm:*)",
       "Bash(python3:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Skill(update-config)",
+      "Bash(aws --version)",
+      "Bash(cdk --version)",
+      "Bash(npm --version)",
+      "Bash(aws sts:*)",
+      "Bash(npm install:*)",
+      "Bash(curl -s \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o /tmp/awscliv2.zip)",
+      "Bash(unzip -q /tmp/awscliv2.zip -d /tmp)",
+      "Bash(sudo /tmp/aws/install)",
+      "Bash(npx cdk:*)",
+      "Bash(cp /tmp/cdk-init/cdk.json /workspaces/Darlings-Waterfront-Management/infrastructure/)",
+      "Bash(cp /tmp/cdk-init/tsconfig.json /workspaces/Darlings-Waterfront-Management/infrastructure/)",
+      "Bash(cp /tmp/cdk-init/package.json /workspaces/Darlings-Waterfront-Management/infrastructure/)",
+      "Bash(cp /tmp/cdk-init/package-lock.json /workspaces/Darlings-Waterfront-Management/infrastructure/)",
+      "Bash(aws cloudformation describe-stacks:*)",
+      "Bash(aws cloudformation:*)"
     ]
   }
 }

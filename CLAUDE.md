@@ -5,9 +5,9 @@
 |----------|-------|
 | AWS Account | 119002863133 |
 | Region | us-east-1 |
-| App URL | *(post-deploy)* |
-| API Gateway URL | *(post-deploy)* |
-| CloudFront Distribution ID | *(post-deploy)* |
+| App URL | https://d2ih87vneh642g.cloudfront.net |
+| API Gateway URL | https://r7wuhspii5.execute-api.us-east-1.amazonaws.com/prod/ |
+| CloudFront Distribution ID | E32EW6VUY7FGE7 |
 | S3 Bucket | `darlings-waterfront-frontend-119002863133` |
 | CDK Stack Prefix | `DarlingsWaterfront` |
 | Concert Source | https://www.waterfrontconcerts.com/ |
