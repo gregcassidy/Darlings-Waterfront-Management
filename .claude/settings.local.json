@@ -81,7 +81,10 @@
       "Bash(cp /tmp/cdk-init/package.json /workspaces/Darlings-Waterfront-Management/infrastructure/)",
       "Bash(cp /tmp/cdk-init/package-lock.json /workspaces/Darlings-Waterfront-Management/infrastructure/)",
       "Bash(aws cloudformation describe-stacks:*)",
-      "Bash(aws cloudformation:*)"
+      "Bash(aws cloudformation:*)",
+      "Bash(git -C /workspaces/Darlings-Waterfront-Management status --short)",
+      "Bash(ls /workspaces/Darlings-Waterfront-Management/docs/Session_Notes_2026-04-05*)",
+      "Bash(git commit -m ':*)"
     ]
   }
 }
