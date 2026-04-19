@@ -8,6 +8,7 @@ export interface DatabaseTables {
   preferences: dynamodb.Table;
   assignments: dynamodb.Table;
   settings: dynamodb.Table;
+  jaysGuests: dynamodb.Table;
 }
 
 export class DatabaseStack extends cdk.Stack {
@@ -69,6 +70,13 @@ export class DatabaseStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    this.tables = { concerts, employees, preferences, assignments, settings };
+    const jaysGuests = new dynamodb.Table(this, 'JaysGuests', {
+      tableName: 'WF-JaysGuests',
+      partitionKey: { name: 'guestId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    this.tables = { concerts, employees, preferences, assignments, settings, jaysGuests };
   }
 }

@@ -23,8 +23,10 @@ export class ApiStack extends cdk.Stack {
       PREFERENCES_TABLE: tables.preferences.tableName,
       ASSIGNMENTS_TABLE: tables.assignments.tableName,
       SETTINGS_TABLE: tables.settings.tableName,
+      GUESTS_TABLE: tables.jaysGuests.tableName,
       AZURE_TENANT_ID: process.env.AZURE_TENANT_ID || '',
       AZURE_CLIENT_ID: process.env.AZURE_CLIENT_ID || '',
+      ADMIN_USER_IDS: process.env.ADMIN_USER_IDS || '',
     };
 
     const lambdaRuntime = lambda.Runtime.NODEJS_22_X;
@@ -62,8 +64,7 @@ export class ApiStack extends cdk.Stack {
 
     const auth = { authorizer: lambdaAuthorizer };
 
-    // Helper to create a Lambda + grant table access
-    const createFn = (id: string, folder: string, tables: cdk.aws_dynamodb.ITable[]) => {
+    const createFn = (id: string, folder: string, grantedTables: cdk.aws_dynamodb.ITable[]) => {
       const fn = new lambda.Function(this, id, {
         runtime: lambdaRuntime,
         timeout: lambdaTimeout,
@@ -72,7 +73,7 @@ export class ApiStack extends cdk.Stack {
         handler: 'index.handler',
         environment: commonEnv,
       });
-      tables.forEach(t => t.grantReadWriteData(fn));
+      grantedTables.forEach(t => t.grantReadWriteData(fn));
       fn.addToRolePolicy(new iam.PolicyStatement({
         actions: ['ses:SendEmail', 'ses:SendRawEmail'],
         resources: ['*'],
@@ -81,28 +82,32 @@ export class ApiStack extends cdk.Stack {
     };
 
     // Lambda functions
-    const concertsFn = createFn('Concerts', 'concerts', [props.tables.concerts, props.tables.settings]);
-    const preferencesFn = createFn('Preferences', 'preferences', [props.tables.preferences, props.tables.employees, props.tables.settings]);
-    const assignmentsFn = createFn('Assignments', 'assignments', [props.tables.assignments, props.tables.concerts, props.tables.employees]);
-    const notificationsFn = createFn('Notifications', 'notifications', [props.tables.assignments, props.tables.employees, props.tables.concerts, props.tables.settings]);
-    const settingsFn = createFn('Settings', 'settings', [props.tables.settings, props.tables.employees]);
+    const concertsFn = createFn('Concerts', 'concerts', [tables.concerts, tables.settings, tables.preferences]);
+    const preferencesFn = createFn('Preferences', 'preferences', [tables.preferences, tables.employees, tables.settings, tables.concerts]);
+    const assignmentsFn = createFn('Assignments', 'assignments', [tables.assignments, tables.concerts, tables.employees]);
+    const notificationsFn = createFn('Notifications', 'notifications', [tables.assignments, tables.employees, tables.concerts, tables.settings]);
+    const settingsFn = createFn('Settings', 'settings', [tables.settings, tables.employees]);
+    const guestsFn = createFn('Guests', 'guests', [tables.jaysGuests]);
 
-    // API routes
+    // /concerts routes
     const concerts = this.api.root.addResource('concerts');
     concerts.addMethod('GET');
     concerts.addMethod('POST', new apigateway.LambdaIntegration(concertsFn), auth);
     concerts.addResource('sync').addMethod('POST', new apigateway.LambdaIntegration(concertsFn), auth);
+    concerts.addResource('seed').addMethod('POST', new apigateway.LambdaIntegration(concertsFn), auth);
     const concert = concerts.addResource('{id}');
     concert.addMethod('GET');
     concert.addMethod('PUT', new apigateway.LambdaIntegration(concertsFn), auth);
     concert.addMethod('DELETE', new apigateway.LambdaIntegration(concertsFn), auth);
 
+    // /preferences routes
     const preferences = this.api.root.addResource('preferences');
     preferences.addMethod('GET', new apigateway.LambdaIntegration(preferencesFn), auth);
     preferences.addMethod('POST', new apigateway.LambdaIntegration(preferencesFn), auth);
     preferences.addResource('me').addMethod('GET', new apigateway.LambdaIntegration(preferencesFn), auth);
     preferences.addResource('{userId}').addMethod('GET', new apigateway.LambdaIntegration(preferencesFn), auth);
 
+    // /assignments routes
     const assignments = this.api.root.addResource('assignments');
     assignments.addMethod('GET', new apigateway.LambdaIntegration(assignmentsFn), auth);
     assignments.addMethod('POST', new apigateway.LambdaIntegration(assignmentsFn), auth);
@@ -112,13 +117,22 @@ export class ApiStack extends cdk.Stack {
     assignment.addMethod('PUT', new apigateway.LambdaIntegration(assignmentsFn), auth);
     assignment.addMethod('DELETE', new apigateway.LambdaIntegration(assignmentsFn), auth);
 
+    // /notifications routes
     const notifications = this.api.root.addResource('notifications');
     notifications.addResource('winner').addMethod('POST', new apigateway.LambdaIntegration(notificationsFn), auth);
     notifications.addResource('announce').addMethod('POST', new apigateway.LambdaIntegration(notificationsFn), auth);
 
+    // /settings routes
     const settings = this.api.root.addResource('settings');
     settings.addMethod('GET', new apigateway.LambdaIntegration(settingsFn), auth);
     settings.addResource('{key}').addMethod('PUT', new apigateway.LambdaIntegration(settingsFn), auth);
-    settings.addResource('submissions').addResource('lock').addResource('{userId}').addMethod('PUT', new apigateway.LambdaIntegration(settingsFn), auth);
+
+    // /guests routes (admin only — Jay's external contacts)
+    const guests = this.api.root.addResource('guests');
+    guests.addMethod('GET', new apigateway.LambdaIntegration(guestsFn), auth);
+    guests.addMethod('POST', new apigateway.LambdaIntegration(guestsFn), auth);
+    const guest = guests.addResource('{id}');
+    guest.addMethod('PUT', new apigateway.LambdaIntegration(guestsFn), auth);
+    guest.addMethod('DELETE', new apigateway.LambdaIntegration(guestsFn), auth);
   }
 }

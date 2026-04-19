@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — Darling's Waterfront Tickets</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+  <style>
+    .concert-row td:first-child { font-weight: 600; }
+    .tally-cell { text-align: center; font-size: .8rem; }
+    .tally-num  { font-weight: 700; color: var(--navy); }
+    .slot-section { margin-bottom: 1.5rem; }
+    .slot-section h3 { margin-bottom: .75rem; display:flex; align-items:center; gap:.5rem; }
+    .requests-list { display:flex; flex-direction:column; gap:.375rem; }
+    .request-row {
+      display:flex; align-items:center; gap:.75rem;
+      padding:.5rem .75rem; border-radius:var(--radius);
+      background:var(--gray-50); border:1px solid var(--gray-200);
+      font-size:.85rem;
+    }
+    .request-rank { font-weight:700; color:var(--white); background:var(--navy);
+      width:1.5rem; height:1.5rem; border-radius:50%; display:flex;
+      align-items:center; justify-content:center; font-size:.75rem; flex-shrink:0; }
+    .guest-row td { vertical-align:middle; }
+    .section-actions { display:flex; gap:.5rem; }
+  </style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">🎵 Darling's Waterfront <span>Admin</span></div>
+  <div class="header-right">
+    <span class="user-info" id="userDisplay"></span>
+    <a href="/index.html" class="admin-link">Employee View</a>
+    <button class="btn btn-outline btn-sm" onclick="Auth.logout()">Sign Out</button>
+  </div>
+</header>
+
+<div class="container page-content">
+
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-concerts-btn" onclick="Admin.showTab('concerts', this)">Concerts</button>
+    <button class="tab-btn" id="tab-guests-btn" onclick="Admin.showTab('guests', this)">Jay's Guests</button>
+    <button class="tab-btn" id="tab-settings-btn" onclick="Admin.showTab('settings', this)">Settings</button>
+  </div>
+
+  <!-- ═══ CONCERTS TAB ═══ -->
+  <div id="tab-concerts">
+
+    <!-- Concert List -->
+    <div id="view-list">
+      <div class="section-header">
+        <h2>2026 Season Concerts</h2>
+        <div class="section-actions">
+          <button class="btn btn-outline btn-sm" onclick="Admin.seedConcerts()">Seed 2026 Data</button>
+          <button class="btn btn-primary btn-sm" onclick="Admin.showAddConcert()">+ Add Concert</button>
+        </div>
+      </div>
+      <div id="concertListLoading" class="loading"><div class="loading-spinner"></div></div>
+      <div id="concertListWrap" class="card hidden">
+        <div class="table-wrap">
+          <table id="concertTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Concert</th>
+                <th>Date</th>
+                <th>Day</th>
+                <th>Hotel</th>
+                <th class="tally-cell">#1</th>
+                <th class="tally-cell">#2</th>
+                <th class="tally-cell">#3</th>
+                <th class="tally-cell">#4</th>
+                <th class="tally-cell">#5</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="concertTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concert Detail -->
+    <div id="view-detail" class="hidden">
+      <div class="section-header">
+        <button class="btn btn-outline btn-sm" onclick="Admin.showList()">← Back to Concerts</button>
+        <button class="btn btn-outline btn-sm" onclick="Admin.editConcertDetails()">Edit Details</button>
+      </div>
+
+      <div class="card mb-4" id="detailHeader"></div>
+
+      <div class="grid-2" style="gap:1.5rem;align-items:start;">
+        <div>
+          <!-- Slot config -->
+          <div class="card mb-4">
+            <div class="card-header">
+              <h3>Slot Configuration</h3>
+              <button class="btn btn-outline btn-sm" id="editSlotsBtn" onclick="Admin.toggleSlotEdit()">Edit Counts</button>
+            </div>
+            <div id="slotConfigView"></div>
+            <div id="slotConfigEdit" class="hidden">
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label">Suite Tickets</label>
+                  <input type="number" class="form-control" id="cfg-suite" min="0" max="99" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Club Tickets</label>
+                  <input type="number" class="form-control" id="cfg-club" min="0" max="99" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">BSB Parking</label>
+                  <input type="number" class="form-control" id="cfg-bsb" min="0" max="99" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Suite Parking</label>
+                  <input type="number" class="form-control" id="cfg-suiteParking" min="0" max="99" />
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button class="btn btn-primary btn-sm" onclick="Admin.saveSlotConfig()">Save</button>
+                <button class="btn btn-outline btn-sm" onclick="Admin.toggleSlotEdit()">Cancel</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Requests panel -->
+          <div class="card">
+            <div class="card-header">
+              <h3>Employee Requests</h3>
+              <span class="badge badge-blue" id="requestCount">0</span>
+            </div>
+            <div id="requestsList" class="requests-list"></div>
+          </div>
+        </div>
+
+        <div id="slotGrids"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ GUESTS TAB ═══ -->
+  <div id="tab-guests" class="hidden">
+    <div class="section-header">
+      <h2>Jay's Guests</h2>
+      <button class="btn btn-primary btn-sm" onclick="Admin.showGuestModal()">+ Add Guest</button>
+    </div>
+    <div class="alert alert-info mb-4">
+      This list is admin-only. These are Jay's personal contacts who may be invited to events.
+    </div>
+    <div id="guestsLoading" class="loading hidden"><div class="loading-spinner"></div></div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Last Name</th><th>Full Name</th><th>Email</th><th>Phone</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="guestsTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SETTINGS TAB ═══ -->
+  <div id="tab-settings" class="hidden">
+    <div class="section-header"><h2>Settings</h2></div>
+    <div class="card" style="max-width:480px;">
+      <div id="settingsLoading" class="loading"><div class="loading-spinner"></div></div>
+      <div id="settingsForm" class="hidden">
+        <div class="form-group">
+          <label class="form-label">Employee Submissions</label>
+          <div class="flex gap-2 items-center" style="margin-top:.25rem;">
+            <button class="btn btn-success btn-sm" id="openSubsBtn" onclick="Admin.setSubmissions(true)">Open Submissions</button>
+            <button class="btn btn-danger btn-sm" id="closeSubsBtn" onclick="Admin.setSubmissions(false)">Close Submissions</button>
+            <span id="subsStatus" class="badge">—</span>
+          </div>
+        </div>
+        <div class="form-group mt-4">
+          <label class="form-label">Current Season</label>
+          <div class="flex gap-2">
+            <input type="text" class="form-control" id="seasonInput" placeholder="2026" style="max-width:120px;" />
+            <button class="btn btn-outline btn-sm" onclick="Admin.saveSeason()">Save</button>
+          </div>
+        </div>
+        <div class="form-group mt-4">
+          <label class="form-label">Notification From Email</label>
+          <div class="flex gap-2">
+            <input type="email" class="form-control" id="fromEmailInput" placeholder="tickets@darlings.com" />
+            <button class="btn btn-outline btn-sm" onclick="Admin.saveFromEmail()">Save</button>
+          </div>
+        </div>
+        <div id="settingsSaveMsg" style="margin-top:.75rem;font-size:.85rem;"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══ ASSIGN SLOT MODAL ═══ -->
+<div class="modal-overlay hidden" id="assignModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="assignModalTitle">Assign Slot</h2>
+      <button class="btn-close" onclick="Admin.closeAssignModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Assign Type</label>
+        <select class="form-control" id="assignType" onchange="Admin.onAssignTypeChange()">
+          <option value="employee">Employee (from requests)</option>
+          <option value="guest">Jay's Guest</option>
+          <option value="manual">Manual / VIP</option>
+        </select>
+      </div>
+      <div id="assignEmployee" class="form-group">
+        <label class="form-label">Select Employee</label>
+        <select class="form-control" id="assignEmployeeSelect"></select>
+      </div>
+      <div id="assignGuest" class="form-group hidden">
+        <label class="form-label">Select Guest</label>
+        <select class="form-control" id="assignGuestSelect"></select>
+      </div>
+      <div id="assignManual" class="hidden">
+        <div class="form-group">
+          <label class="form-label">Name <span style="color:var(--red)">*</span></label>
+          <input type="text" class="form-control" id="manualName" placeholder="Full name" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input type="email" class="form-control" id="manualEmail" placeholder="email@example.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Phone</label>
+          <input type="text" class="form-control" id="manualPhone" />
+        </div>
+      </div>
+      <div id="assignError" class="alert alert-error hidden"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="Admin.closeAssignModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="Admin.saveAssignment()">Assign</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ GUEST MODAL ═══ -->
+<div class="modal-overlay hidden" id="guestModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="guestModalTitle">Add Guest</h2>
+      <button class="btn-close" onclick="Admin.closeGuestModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid-2">
+        <div class="form-group">
+          <label class="form-label">Last Name <span style="color:var(--red)">*</span></label>
+          <input type="text" class="form-control" id="guestLastName" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Full Name <span style="color:var(--red)">*</span></label>
+          <input type="text" class="form-control" id="guestFullName" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Email</label>
+        <input type="email" class="form-control" id="guestEmail" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Phone</label>
+        <input type="text" class="form-control" id="guestPhone" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes</label>
+        <textarea class="form-control" id="guestNotes" rows="2"></textarea>
+      </div>
+      <div id="guestError" class="alert alert-error hidden"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="Admin.closeGuestModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="Admin.saveGuest()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/admin.js"></script>
+<script>Admin.init();</script>
+</body>
+</html>

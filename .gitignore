@@ -7,7 +7,7 @@ infrastructure/lib/*.js
 infrastructure/lib/*.d.ts
 infrastructure/bin/*.js
 infrastructure/bin/*.d.ts
-infrastructure/lambda/**/*.js
-infrastructure/lambda/**/*.d.ts
-!infrastructure/lambda/**/*.test.js
+infrastructure/lambda/shared/*.js
+infrastructure/lambda/shared/*.d.ts
+!infrastructure/lambda/functions/**/*.js
 .claude/settings.local.json

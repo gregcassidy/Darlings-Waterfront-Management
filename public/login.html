@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign In — Darling's Waterfront Tickets</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+
+<div class="login-page">
+  <div class="login-card">
+    <div class="login-logo">🎵</div>
+    <h1>Darling's Waterfront Tickets</h1>
+    <p class="subtitle">Maine Savings Amphitheater — 2026 Season</p>
+
+    <div id="loginSection">
+      <button class="btn btn-ms w-full" id="ssoBtn" onclick="handleSSOLogin()">
+        <svg viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+          <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+          <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+          <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+        </svg>
+        Sign in with Microsoft
+      </button>
+
+      <div id="errorMsg" class="login-error"></div>
+    </div>
+
+    <div id="loadingSection" class="hidden">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        <p>Signing you in…</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+  (async () => {
+    // Handle redirect coming back from Azure AD
+    try {
+      const result = await Auth.handleRedirect();
+      if (result || Auth.isLoggedIn()) {
+        window.location.replace('/index.html');
+        return;
+      }
+    } catch (e) {
+      showError(e.message);
+    }
+
+    // Dev mode — skip login
+    const config = await Auth.loadConfig();
+    const devMode = !config.azureTenantId || config.azureTenantId === 'REPLACE_WITH_TENANT_ID';
+    if (devMode) {
+      document.getElementById('ssoBtn').textContent = '⚡ Continue (Dev Mode — Azure AD not configured)';
+      document.getElementById('ssoBtn').className = 'btn btn-outline w-full';
+    }
+  })();
+
+  async function handleSSOLogin() {
+    document.getElementById('loginSection').classList.add('hidden');
+    document.getElementById('loadingSection').classList.remove('hidden');
+    try {
+      await Auth.login();
+    } catch (e) {
+      document.getElementById('loginSection').classList.remove('hidden');
+      document.getElementById('loadingSection').classList.add('hidden');
+      showError('Sign-in failed: ' + e.message);
+    }
+  }
+
+  function showError(msg) {
+    document.getElementById('errorMsg').textContent = msg;
+  }
+</script>
+</body>
+</html>
