@@ -84,19 +84,19 @@ export class ApiStack extends cdk.Stack {
     // Lambda functions
     const concertsFn = createFn('Concerts', 'concerts', [tables.concerts, tables.settings, tables.preferences]);
     const preferencesFn = createFn('Preferences', 'preferences', [tables.preferences, tables.employees, tables.settings, tables.concerts]);
-    const assignmentsFn = createFn('Assignments', 'assignments', [tables.assignments, tables.concerts, tables.employees]);
+    const assignmentsFn = createFn('Assignments', 'assignments', [tables.assignments, tables.concerts, tables.employees, tables.preferences]);
     const notificationsFn = createFn('Notifications', 'notifications', [tables.assignments, tables.employees, tables.concerts, tables.settings]);
     const settingsFn = createFn('Settings', 'settings', [tables.settings, tables.employees]);
     const guestsFn = createFn('Guests', 'guests', [tables.jaysGuests]);
 
     // /concerts routes
     const concerts = this.api.root.addResource('concerts');
-    concerts.addMethod('GET');
+    concerts.addMethod('GET', new apigateway.LambdaIntegration(concertsFn));
     concerts.addMethod('POST', new apigateway.LambdaIntegration(concertsFn), auth);
     concerts.addResource('sync').addMethod('POST', new apigateway.LambdaIntegration(concertsFn), auth);
     concerts.addResource('seed').addMethod('POST', new apigateway.LambdaIntegration(concertsFn), auth);
     const concert = concerts.addResource('{id}');
-    concert.addMethod('GET');
+    concert.addMethod('GET', new apigateway.LambdaIntegration(concertsFn), auth);
     concert.addMethod('PUT', new apigateway.LambdaIntegration(concertsFn), auth);
     concert.addMethod('DELETE', new apigateway.LambdaIntegration(concertsFn), auth);
 

@@ -66,12 +66,13 @@ async function getConcertAssignmentsHandler(concertId, event) {
   if (!concert.Item) return res(404, { error: 'Concert not found' });
 
   // Build slot grids so admin can see empty + filled slots
-  const slotTypes = ['suite', 'club', 'bsbParking', 'suiteParking'];
+  const slotTypes = ['suite', 'club', 'bsbParking', 'suiteParking', 'hotel'];
   const countMap = {
     suite: concert.Item.suiteTicketCount || 20,
-    club: concert.Item.clubTicketCount || 10,
+    club: concert.Item.clubTicketCount || 86,
     bsbParking: concert.Item.bsbParkingCount || 20,
     suiteParking: concert.Item.suiteParkingCount || 8,
+    hotel: concert.Item.hotelRooms || 0,
   };
 
   const slotGrids = {};
@@ -127,7 +128,7 @@ async function createAssignment(event) {
     return res(400, { error: 'concertId, slotType, slotNumber, and name are required' });
   }
 
-  const validSlotTypes = ['suite', 'club', 'bsbParking', 'suiteParking'];
+  const validSlotTypes = ['suite', 'club', 'bsbParking', 'suiteParking', 'hotel'];
   if (!validSlotTypes.includes(slotType)) {
     return res(400, { error: `slotType must be one of: ${validSlotTypes.join(', ')}` });
   }

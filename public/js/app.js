@@ -41,16 +41,10 @@ const App = (() => {
         document.getElementById('emailBanner').classList.remove('hidden');
       }
 
-      // Show admin link if user has admin role (check via API response behaviour)
-      // Admin link is shown based on whether GET /preferences returns all employees
-      // Instead, we check if user can access /preferences (returns all) vs /preferences/me
-      // Simple approach: call /preferences?season=2026 and check if we get array of all prefs
-      try {
-        const allPrefs = await Auth.apiRequest('/preferences?season=2026');
-        if (Array.isArray(allPrefs)) {
-          document.getElementById('adminLink').classList.remove('hidden');
-        }
-      } catch (e) { /* not admin */ }
+      // Show admin link based on role returned by /employees/me (sourced from authorizer context)
+      if (profile?.role === 'admin') {
+        document.getElementById('adminLink').classList.remove('hidden');
+      }
 
       if (!submissionsOpen) {
         document.getElementById('closedBanner').classList.remove('hidden');

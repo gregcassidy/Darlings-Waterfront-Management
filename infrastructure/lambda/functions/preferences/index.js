@@ -146,7 +146,9 @@ async function getAllPreferences(event) {
 async function getMyProfile(event) {
   const user = getUser(event);
   const result = await db.send(new GetCommand({ TableName: EMPLOYEES_TABLE, Key: { userId: user.userId } }));
-  return res(200, result.Item || { userId: user.userId, workEmail: user.email, displayName: user.name });
+  const profile = result.Item || { userId: user.userId, workEmail: user.email, displayName: user.name };
+  // Always include the live role from the authorizer context so the frontend can trust it
+  return res(200, { ...profile, role: user.role });
 }
 
 async function updateMyProfile(event) {

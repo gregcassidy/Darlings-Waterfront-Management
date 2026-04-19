@@ -216,18 +216,17 @@ tr:hover td { background: var(--blue-pale); }
 .slot-item {
   border: 1px solid var(--gray-200);
   border-radius: var(--radius);
-  padding: .625rem .875rem;
+  padding: .5rem .75rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: .5rem;
+  gap: .625rem;
   background: var(--white);
   font-size: .85rem;
 }
 .slot-item.assigned { border-color: var(--green); background: var(--green-pale); }
 .slot-item.empty    { border-style: dashed; background: var(--gray-50); }
-.slot-num { font-weight: 700; color: var(--gray-500); min-width: 1.5rem; font-size: .8rem; }
-.slot-name { flex: 1; font-weight: 500; color: var(--gray-800); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slot-num { font-weight: 700; color: var(--gray-500); min-width: 2rem; font-size: .8rem; flex-shrink: 0; }
+.slot-name { font-weight: 500; color: var(--gray-800); }
 .slot-empty-label { flex: 1; color: var(--gray-400); font-style: italic; }
 
 /* ── Preference slots ── */

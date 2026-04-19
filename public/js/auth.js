@@ -85,43 +85,56 @@ async function logout() {
 }
 
 async function getAuthToken() {
-  // Dev mode
-  if (sessionStorage.getItem('devMode') === 'true') {
+  const msalInstance = await initMsal();
+
+  // Real Azure AD configured — clear any stale dev-mode flag and use real tokens
+  if (msalInstance) {
+    sessionStorage.removeItem('devMode');
+  } else {
+    // Dev mode (no Azure AD credentials configured)
     return 'dev-token';
   }
 
-  const msalInstance = await initMsal();
-  if (!msalInstance) return 'dev-token';
-
   const account = msalInstance.getActiveAccount() || (msalInstance.getAllAccounts()[0] || null);
-  if (!account) return null;
-
-  const config = await loadConfig();
-
-  // Try API-specific scope first, fall back to id token via openid scope
-  const scopes = config.azureClientId
-    ? [`api://${config.azureClientId}/access_as_user`]
-    : ['openid', 'profile', 'email'];
+  if (!account) {
+    console.error('getAuthToken: no MSAL account found');
+    return null;
+  }
 
   try {
-    const result = await msalInstance.acquireTokenSilent({ account, scopes });
-    return result.accessToken || result.idToken;
-  } catch (silentErr) {
-    // Fall back to id token
+    const result = await msalInstance.acquireTokenSilent({
+      account,
+      scopes: ['openid', 'profile', 'email'],
+      forceRefresh: false,
+    });
+    // Verify the returned token isn't already expired
+    if (result.idToken) {
+      const payload = JSON.parse(atob(result.idToken.split('.')[1]));
+      if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+        throw new Error('Token expired');
+      }
+    }
+    return result.idToken;
+  } catch (err) {
+    console.warn('Silent token failed, forcing refresh:', err.message);
     try {
       const result = await msalInstance.acquireTokenSilent({
         account,
         scopes: ['openid', 'profile', 'email'],
+        forceRefresh: true,
       });
       return result.idToken;
-    } catch (err) {
-      console.error('Token acquisition failed:', err);
-      // Interactive fallback
+    } catch (refreshErr) {
+      console.warn('Forced refresh failed, trying popup:', refreshErr.message);
       try {
-        const result = await msalInstance.acquireTokenPopup({ account, scopes: ['openid', 'profile', 'email'] });
+        const result = await msalInstance.acquireTokenPopup({
+          account,
+          scopes: ['openid', 'profile', 'email'],
+        });
         return result.idToken;
       } catch (popupErr) {
-        console.error('Interactive token failed:', popupErr);
+        console.error('Token acquisition failed, redirecting to login:', popupErr.message);
+        await login();
         return null;
       }
     }

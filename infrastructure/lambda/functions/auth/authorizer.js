@@ -98,6 +98,8 @@ exports.handler = async (event) => {
   }
 
   try {
+    const parts = token.split('.');
+    console.log(`Token debug: parts=${parts.length}, suffix=...${token.slice(-8)}`);
     const payload = await verifyToken(token);
 
     const userId = payload.oid || payload.sub;
@@ -109,7 +111,11 @@ exports.handler = async (event) => {
     const isAdmin = jwtRoles.some(r => ['Admin', 'WaterfrontAdmin'].includes(r)) ||
                     ADMIN_USER_IDS.includes(userId);
 
-    return generatePolicy(userId, 'Allow', event.methodArn, {
+    console.log(`Auth OK: userId=${userId} role=${isAdmin ? 'admin' : 'employee'} aud=${payload.aud} roles=${JSON.stringify(jwtRoles)}`);
+    // Wildcard ARN so the cached policy covers all API methods, not just the triggering one
+    const arnParts = event.methodArn.split('/');
+    const wildcardArn = `${arnParts[0]}/${arnParts[1]}/*/*`;
+    return generatePolicy(userId, 'Allow', wildcardArn, {
       userId,
       name,
       email,
