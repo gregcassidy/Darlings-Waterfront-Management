@@ -1,5 +1,6 @@
 {
   "apiUrl": "https://r7wuhspii5.execute-api.us-east-1.amazonaws.com/prod",
-  "azureTenantId": "REPLACE_WITH_TENANT_ID",
-  "azureClientId": "REPLACE_WITH_CLIENT_ID"
+  "azureTenantId": "0c92f65f-782b-462f-987e-bfcba4656cb2",
+  "azureClientId": "711c8df8-546e-462c-afd3-4392c792a3cb",
+  "season": "2026"
 }
