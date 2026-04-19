@@ -24,9 +24,12 @@ export class ApiStack extends cdk.Stack {
       ASSIGNMENTS_TABLE: tables.assignments.tableName,
       SETTINGS_TABLE: tables.settings.tableName,
       GUESTS_TABLE: tables.jaysGuests.tableName,
-      AZURE_TENANT_ID: process.env.AZURE_TENANT_ID || '',
-      AZURE_CLIENT_ID: process.env.AZURE_CLIENT_ID || '',
+      // Azure AD credentials — baked in as defaults so `cdk deploy` without env vars
+      // doesn't wipe them. Override with process.env if rotating.
+      AZURE_TENANT_ID: process.env.AZURE_TENANT_ID || '0c92f65f-782b-462f-987e-bfcba4656cb2',
+      AZURE_CLIENT_ID: process.env.AZURE_CLIENT_ID || '711c8df8-546e-462c-afd3-4392c792a3cb',
       ADMIN_USER_IDS: process.env.ADMIN_USER_IDS || '',
+      ADMIN_EMAILS: process.env.ADMIN_EMAILS || 'jay.darling@darlings.com,lorilei.porter@darlings.com',
     };
 
     const lambdaRuntime = lambda.Runtime.NODEJS_22_X;
@@ -99,6 +102,10 @@ export class ApiStack extends cdk.Stack {
     concert.addMethod('GET', new apigateway.LambdaIntegration(concertsFn), auth);
     concert.addMethod('PUT', new apigateway.LambdaIntegration(concertsFn), auth);
     concert.addMethod('DELETE', new apigateway.LambdaIntegration(concertsFn), auth);
+
+    // /public routes (no authorizer — for external one-time submitters)
+    const publicRoot = this.api.root.addResource('public');
+    publicRoot.addResource('preferences').addMethod('POST', new apigateway.LambdaIntegration(preferencesFn));
 
     // /preferences routes
     const preferences = this.api.root.addResource('preferences');

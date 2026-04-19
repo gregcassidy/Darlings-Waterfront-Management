@@ -85,7 +85,17 @@
       "Bash(git -C /workspaces/Darlings-Waterfront-Management status --short)",
       "Bash(ls /workspaces/Darlings-Waterfront-Management/docs/Session_Notes_2026-04-05*)",
       "Bash(git commit -m ':*)",
-      "Bash(echo \"Deploy started in background \\(PID $!\\)\")"
+      "Bash(echo \"Deploy started in background \\(PID $!\\)\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://r7wuhspii5.execute-api.us-east-1.amazonaws.com/prod/concerts?season=2026\")",
+      "Bash(curl -s \"https://r7wuhspii5.execute-api.us-east-1.amazonaws.com/prod/concerts?season=2026\")",
+      "Bash(curl:*)",
+      "Bash(pip install *)",
+      "Bash(node *)",
+      "Bash(ln -sf /workspaces/Darlings-Waterfront-Management/infrastructure/node_modules node_modules)",
+      "Bash(dig +short CNAME _c51954052b7ada052aa7c119117f10f0.waterfront.darlings.com @8.8.8.8)",
+      "Bash(dig +short CNAME _c51954052b7ada052aa7c119117f10f0.waterfront.darlings.com @1.1.1.1)",
+      "Bash(nslookup -type=CNAME _c51954052b7ada052aa7c119117f10f0.waterfront.darlings.com 8.8.8.8)",
+      "Bash(getent hosts *)"
     ]
   }
 }

@@ -16,6 +16,19 @@ const App = (() => {
       document.getElementById('userDisplay').textContent = user.name || user.email;
     }
 
+    // Admins default to the admin dashboard unless they explicitly requested the employee view.
+    const wantsEmployeeView = new URLSearchParams(window.location.search).get('view') === 'employee';
+    if (!wantsEmployeeView) {
+      try {
+        const quickProfile = await Auth.apiRequest('/employees/me').catch(() => null);
+        if (quickProfile?.role === 'admin') {
+          window.location.replace('/admin.html');
+          return;
+        }
+        employeeProfile = quickProfile;
+      } catch (e) {}
+    }
+
     // Load settings + concerts + existing preferences + profile in parallel
     // Also kick off Graph profile sync in background (fire-and-forget)
     Auth.fetchGraphProfile().then(gp => { if (gp) Auth.syncProfileToBackend(gp); });
@@ -25,7 +38,7 @@ const App = (() => {
         Auth.apiRequest('/settings'),
         Auth.apiRequest('/concerts?season=2026'),
         Auth.apiRequest('/preferences/me'),
-        Auth.apiRequest('/employees/me').catch(() => null),
+        employeeProfile ? Promise.resolve(employeeProfile) : Auth.apiRequest('/employees/me').catch(() => null),
       ]);
 
       submissionsOpen = settings?.submissionsOpen === 'true';
@@ -84,12 +97,15 @@ const App = (() => {
     const submitBtn = document.getElementById('submitBtn');
     submitBtn.disabled = filled === 0 || !submissionsOpen || !hasEmail;
 
+    const lastFilled = filled - 1;
     container.innerHTML = '';
     for (let i = 0; i < 5; i++) {
       const concertId = selections[i];
       const concert = concertId ? concerts.find(c => c.concertId === concertId) : null;
       const slot = document.createElement('div');
       slot.className = `pref-slot${concert ? ' filled' : ''}`;
+      const canMoveUp   = concert && submissionsOpen && i > 0;
+      const canMoveDown = concert && submissionsOpen && i < lastFilled;
       slot.innerHTML = `
         <div class="pref-rank">${i + 1}</div>
         ${concert ? `
@@ -97,13 +113,30 @@ const App = (() => {
             <div class="pref-concert-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${concert.name}</div>
             <div class="pref-concert-date">${formatDate(concert.date)} &bull; ${concert.doorsTime}</div>
           </div>
-          <button class="btn btn-sm btn-outline" onclick="App.removePick(${i})" ${!submissionsOpen ? 'disabled' : ''}>✕</button>
+          <div class="flex gap-1" style="flex-shrink:0;">
+            <button class="btn btn-sm btn-outline" title="Move up"   onclick="App.movePick(${i},-1)" ${canMoveUp   ? '' : 'disabled'}>▲</button>
+            <button class="btn btn-sm btn-outline" title="Move down" onclick="App.movePick(${i}, 1)" ${canMoveDown ? '' : 'disabled'}>▼</button>
+            <button class="btn btn-sm btn-outline" title="Remove"    onclick="App.removePick(${i})" ${!submissionsOpen ? 'disabled' : ''}>✕</button>
+          </div>
         ` : `
           <span class="pref-slot-empty">Click a concert to add</span>
         `}
       `;
       container.appendChild(slot);
     }
+  }
+
+  function movePick(index, direction) {
+    const target = index + direction;
+    if (target < 0 || target >= 5) return;
+    if (!selections[index]) return;
+    // Swap — swapping with an empty slot is allowed only when moving down into an empty
+    // (shouldn't happen given button disable logic, but guard anyway)
+    const tmp = selections[index];
+    selections[index] = selections[target];
+    selections[target] = tmp;
+    renderPrefSlots();
+    renderConcertList();
   }
 
   function renderConcertList() {
@@ -319,5 +352,5 @@ const App = (() => {
     return labels[t] || t;
   }
 
-  return { init, submitPreferences, removePick, loadMyTickets, onPersonalEmailChange, saveBannerEmail };
+  return { init, submitPreferences, removePick, movePick, loadMyTickets, onPersonalEmailChange, saveBannerEmail };
 })();

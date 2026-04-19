@@ -7,6 +7,9 @@ const Admin = (() => {
   let currentDetail = null; // { concert, slotGrids, requests }
   let pendingSlot = null;   // { slotType, slotNumber } for assign modal
   let editingGuestId = null;
+  let assigningGuest = null;       // guest being assigned via guestAssignModal
+  let guestAssignDetail = null;    // concert detail currently loaded in modal
+  let currentEmployeeMap = {};     // userId → employee profile, populated when concert detail loads
 
   // ── Init ──────────────────────────────────────────────────
 
@@ -182,13 +185,18 @@ const Admin = (() => {
               <span class="badge badge-gray">${group.length}</span>
             </div>
             ${group.map(r => {
+              const isExternal = r.submissionType === 'external';
               const profile = employeeMap[r.userId] || {};
-              const details = [profile.jobTitle, profile.officeLocation].filter(Boolean).join(' · ');
-              const email = profile.personalEmail || r.email || '';
+              const details = isExternal
+                ? [r.location, r.phone].filter(Boolean).join(' · ')
+                : [profile.jobTitle, profile.officeLocation].filter(Boolean).join(' · ');
+              const email = isExternal ? (r.email || '') : (profile.personalEmail || r.email || '');
               const assigned = assignedMap[r.userId];
               const rowClass = assigned
                 ? (assigned.slotType === 'club' ? ' request-assigned-club' : ' request-assigned-suite')
                 : '';
+              const externalBadge = isExternal
+                ? ` <span class="badge badge-gray" style="font-size:.7rem;">External</span>` : '';
               const actionHtml = assigned
                 ? `<span class="badge ${assigned.slotType === 'club' ? 'badge-green' : 'badge-blue'}" style="flex-shrink:0;">
                      ${assigned.slotType === 'club' ? 'Club' : 'Suite'} #${assigned.slotNumber}
@@ -200,7 +208,7 @@ const Admin = (() => {
               return `
                 <div class="request-row${rowClass}">
                   <div style="flex:1;overflow:hidden;">
-                    <div class="font-medium text-sm">${r.name || ''}</div>
+                    <div class="font-medium text-sm">${r.name || ''}${externalBadge}</div>
                     ${details ? `<div class="text-xs text-muted">${details}</div>` : ''}
                   </div>
                   ${actionHtml}
@@ -211,7 +219,66 @@ const Admin = (() => {
     }
 
     // Slot grids
+    currentEmployeeMap = employeeMap;
     renderAllSlotGrids(data.slotGrids, c, employeeMap);
+  }
+
+  // ── Email export ──────────────────────────────────────────
+
+  const SECTION_LABELS = {
+    suite: 'Suite Tickets', club: 'Club Tickets',
+    bsbParking: 'BSB Parking', suiteParking: 'Suite Parking', hotel: 'Hotel Rooms',
+  };
+
+  function resolveEmail(slot) {
+    if (slot.userId && currentEmployeeMap[slot.userId]?.personalEmail) {
+      return currentEmployeeMap[slot.userId].personalEmail;
+    }
+    return slot.email || '';
+  }
+
+  function csvEscape(v) {
+    const s = (v ?? '').toString();
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  function downloadCsv(filename, rows) {
+    const csv = rows.map(r => r.map(csvEscape).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  }
+
+  function concertSlug(c) {
+    const base = (c.artist || c.name || 'concert').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    return `${c.date || ''}_${base}`.replace(/^_/, '');
+  }
+
+  function exportSectionEmails(sectionKey) {
+    if (!currentDetail) return;
+    const slots = (currentDetail.slotGrids?.[sectionKey] || []).filter(s => s.assignmentId);
+    if (!slots.length) { alert(`No assignments in ${SECTION_LABELS[sectionKey] || sectionKey}.`); return; }
+    const rows = [['Slot', 'Name', 'Email', 'Phone']];
+    for (const s of slots) rows.push([s.slotNumber, s.name || '', resolveEmail(s), s.phone || '']);
+    downloadCsv(`${concertSlug(currentDetail.concert)}_${sectionKey}_emails.csv`, rows);
+  }
+
+  function exportAllEmails() {
+    if (!currentDetail) return;
+    const rows = [['Section', 'Slot', 'Name', 'Email', 'Phone']];
+    let count = 0;
+    for (const key of ['suite', 'club', 'bsbParking', 'suiteParking', 'hotel']) {
+      const slots = (currentDetail.slotGrids?.[key] || []).filter(s => s.assignmentId);
+      for (const s of slots) {
+        rows.push([SECTION_LABELS[key], s.slotNumber, s.name || '', resolveEmail(s), s.phone || '']);
+        count++;
+      }
+    }
+    if (!count) { alert('No assignments to export for this concert.'); return; }
+    downloadCsv(`${concertSlug(currentDetail.concert)}_all_emails.csv`, rows);
   }
 
   function renderSlotConfigView(c) {
@@ -270,7 +337,12 @@ const Admin = (() => {
       { key: 'suiteParking', label: 'Suite Parking', icon: '🚗' },
     ];
 
-    container.innerHTML = sections.map(({ key, label, icon }) => {
+    const header = `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:.5rem;">
+        <button class="btn btn-sm btn-blue" onclick="Admin.exportAllEmails()">⬇ Export All Emails (CSV)</button>
+      </div>`;
+
+    container.innerHTML = header + sections.map(({ key, label, icon }) => {
       const slots = slotGrids[key] || [];
       const filled = slots.filter(s => s.assignmentId).length;
       const hotelNotes = key === 'hotel' && concert.hotelNotes && !(concert.hotelRoomDetails || []).length
@@ -280,7 +352,10 @@ const Admin = (() => {
         <div class="card slot-section">
           <div class="card-header">
             <h3>${icon} ${label}</h3>
-            <span class="badge ${filled === slots.length ? 'badge-green' : 'badge-gray'}">${filled}/${slots.length}</span>
+            <div style="display:flex;align-items:center;gap:.5rem;">
+              <span class="badge ${filled === slots.length ? 'badge-green' : 'badge-gray'}">${filled}/${slots.length}</span>
+              ${filled > 0 ? `<button class="btn btn-sm btn-secondary" style="padding:.2rem .5rem;font-size:.7rem;" onclick="Admin.exportSectionEmails('${key}')" title="Export emails for this section">⬇ CSV</button>` : ''}
+            </div>
           </div>
           ${hotelNotes}
           <div style="display:flex;flex-direction:column;gap:.375rem;">
@@ -554,7 +629,8 @@ const Admin = (() => {
         <td style="white-space:nowrap;">${formatPhone(g.phone) || '<span class="text-muted">—</span>'}</td>
         <td class="text-sm text-muted">${g.notes || ''}</td>
         <td>
-          <div class="flex gap-1">
+          <div class="flex gap-1" style="flex-wrap:nowrap;">
+            <button class="btn btn-primary btn-sm" onclick="Admin.showGuestAssignModal('${g.guestId}')">Assign</button>
             <button class="btn btn-outline btn-sm" onclick="Admin.showGuestModal('${g.guestId}')">Edit</button>
             <button class="btn btn-danger btn-sm" onclick="Admin.deleteGuest('${g.guestId}','${escapeAttr(g.fullName)}')">Delete</button>
           </div>
@@ -617,6 +693,123 @@ const Admin = (() => {
     } catch (err) {
       alert('Failed to delete: ' + err.message);
     }
+  }
+
+  // ── Guest → Assign to Concert Modal ──────────────────────
+
+  async function showGuestAssignModal(guestId) {
+    const guest = allGuests.find(g => g.guestId === guestId);
+    if (!guest) return;
+    assigningGuest = guest;
+    guestAssignDetail = null;
+
+    document.getElementById('guestAssignModalTitle').textContent = `Assign ${guest.fullName} to Concert`;
+    document.getElementById('guestAssignError').classList.add('hidden');
+
+    // Ensure concerts are loaded (in case admin jumps straight to Guests tab — unlikely)
+    if (!concerts.length) {
+      try {
+        concerts = await Auth.apiRequest('/concerts?season=2026') || [];
+      } catch (e) {}
+    }
+
+    const concertSel = document.getElementById('guestAssignConcert');
+    concertSel.innerHTML = '<option value="">— Select a concert —</option>' +
+      concerts.map(c => `<option value="${c.concertId}">${formatDate(c.date)} — ${c.name}</option>`).join('');
+    concertSel.value = '';
+
+    document.getElementById('guestAssignSlotType').value = 'suite';
+    document.getElementById('guestAssignSlotType').disabled = true;
+    const slotNumSel = document.getElementById('guestAssignSlotNumber');
+    slotNumSel.innerHTML = '<option value="">— Pick a concert first —</option>';
+    slotNumSel.disabled = true;
+
+    document.getElementById('guestAssignModal').classList.remove('hidden');
+  }
+
+  function closeGuestAssignModal() {
+    document.getElementById('guestAssignModal').classList.add('hidden');
+    assigningGuest = null;
+    guestAssignDetail = null;
+  }
+
+  async function onGuestAssignConcertChange() {
+    const concertId = document.getElementById('guestAssignConcert').value;
+    const slotTypeSel = document.getElementById('guestAssignSlotType');
+    const slotNumSel = document.getElementById('guestAssignSlotNumber');
+
+    if (!concertId) {
+      slotTypeSel.disabled = true;
+      slotNumSel.disabled = true;
+      slotNumSel.innerHTML = '<option value="">— Pick a concert first —</option>';
+      guestAssignDetail = null;
+      return;
+    }
+
+    slotNumSel.innerHTML = '<option value="">Loading…</option>';
+    try {
+      guestAssignDetail = await Auth.apiRequest(`/assignments/concert/${concertId}`);
+      slotTypeSel.disabled = false;
+      onGuestAssignSlotTypeChange();
+    } catch (err) {
+      slotNumSel.innerHTML = `<option value="">Failed to load: ${err.message}</option>`;
+    }
+  }
+
+  function onGuestAssignSlotTypeChange() {
+    if (!guestAssignDetail) return;
+    const slotType = document.getElementById('guestAssignSlotType').value;
+    const slots = guestAssignDetail.slotGrids?.[slotType] || [];
+    const open = slots.filter(s => !s.assignmentId);
+    const slotNumSel = document.getElementById('guestAssignSlotNumber');
+    slotNumSel.disabled = open.length === 0;
+    if (!slots.length) {
+      slotNumSel.innerHTML = '<option value="">This concert has no slots of this type</option>';
+    } else if (!open.length) {
+      slotNumSel.innerHTML = '<option value="">No open slots — all filled</option>';
+    } else {
+      slotNumSel.innerHTML = open.map(s => `<option value="${s.slotNumber}">#${s.slotNumber}</option>`).join('');
+    }
+  }
+
+  async function saveGuestAssignment() {
+    if (!assigningGuest) return;
+    const errEl = document.getElementById('guestAssignError');
+    errEl.classList.add('hidden');
+
+    const concertId = document.getElementById('guestAssignConcert').value;
+    const slotType = document.getElementById('guestAssignSlotType').value;
+    const slotNumber = parseInt(document.getElementById('guestAssignSlotNumber').value);
+
+    if (!concertId) { return showGuestAssignError('Please select a concert.'); }
+    if (!slotNumber) { return showGuestAssignError('Please select an open slot.'); }
+
+    try {
+      await Auth.apiRequest('/assignments', {
+        method: 'POST',
+        body: JSON.stringify({
+          concertId,
+          slotType,
+          slotNumber,
+          assigneeType: 'guest',
+          guestId: assigningGuest.guestId,
+          name: assigningGuest.fullName,
+          email: assigningGuest.email || '',
+          phone: assigningGuest.phone || '',
+        }),
+      });
+      const concertName = concerts.find(c => c.concertId === concertId)?.name || concertId;
+      closeGuestAssignModal();
+      alert(`✓ Assigned ${assigningGuest.fullName} to ${slotTypeLabel(slotType)} #${slotNumber} for ${concertName}.`);
+    } catch (err) {
+      showGuestAssignError(err.message);
+    }
+  }
+
+  function showGuestAssignError(msg) {
+    const el = document.getElementById('guestAssignError');
+    el.textContent = msg;
+    el.classList.remove('hidden');
   }
 
   // ── Settings ──────────────────────────────────────────────
@@ -684,7 +877,7 @@ const Admin = (() => {
   }
 
   function slotTypeLabel(t) {
-    const labels = { suite: 'Suite Ticket', club: 'Club Ticket', bsbParking: 'BSB Parking', suiteParking: 'Suite Parking' };
+    const labels = { suite: 'Suite Ticket', club: 'Club Ticket', bsbParking: 'BSB Parking', suiteParking: 'Suite Parking', hotel: 'Hotel Room' };
     return labels[t] || t;
   }
 
@@ -742,9 +935,11 @@ const Admin = (() => {
     showList, openConcertDetail,
     toggleSlotEdit, saveSlotConfig,
     openAssignModal, closeAssignModal, onAssignTypeChange, saveAssignment, removeAssignment, quickAssign,
+    exportSectionEmails, exportAllEmails,
     addHotelRoomInput, reindexHotelRooms,
     seedConcerts, showAddConcert, editConcertDetails,
     loadGuests, showGuestModal, closeGuestModal, saveGuest, deleteGuest,
+    showGuestAssignModal, closeGuestAssignModal, onGuestAssignConcertChange, onGuestAssignSlotTypeChange, saveGuestAssignment,
     loadSettings, setSubmissions, saveSeason, saveFromEmail,
   };
 })();

@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Darling's Waterfront — Concert Preferences</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+  <style>
+    .submit-wrap { max-width: 820px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    .brand { text-align: center; margin-bottom: 1.5rem; }
+    .brand h1 { color: var(--navy); }
+    .brand p { margin-top: .25rem; color: var(--gray-600); }
+    .card { background: var(--white); border: 1px solid var(--gray-200); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 1.5rem; margin-bottom: 1.25rem; }
+    .card h2 { margin-bottom: .75rem; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
+    .field { display: flex; flex-direction: column; gap: .35rem; margin-bottom: .85rem; }
+    .field label { font-weight: 600; font-size: .95rem; color: var(--gray-700); }
+    .field .opt { font-weight: 400; color: var(--gray-500); font-size: .85rem; }
+    .field input, .field select {
+      padding: .6rem .75rem; font: inherit; border: 1px solid var(--gray-300);
+      border-radius: var(--radius); background: var(--white); color: var(--gray-800);
+    }
+    .field input:focus, .field select:focus { outline: 2px solid var(--blue-light); outline-offset: 1px; border-color: var(--blue); }
+
+    .slot-row {
+      display: flex; align-items: center; gap: .75rem; padding: .6rem .75rem;
+      border: 1px dashed var(--gray-300); border-radius: var(--radius); margin-bottom: .5rem;
+      background: var(--gray-50);
+    }
+    .slot-row.filled { border-style: solid; border-color: var(--blue); background: var(--blue-pale); }
+    .slot-rank { font-weight: 700; color: var(--navy); width: 1.5rem; }
+    .slot-name { flex: 1; color: var(--gray-800); }
+    .slot-empty { color: var(--gray-500); font-style: italic; }
+    .slot-btns { display: flex; gap: .25rem; }
+    .slot-btns button {
+      background: var(--white); border: 1px solid var(--gray-300); border-radius: 6px;
+      width: 2rem; height: 2rem; cursor: pointer; font-size: 1rem; color: var(--gray-700);
+    }
+    .slot-btns button:hover:not(:disabled) { background: var(--gray-100); }
+    .slot-btns button:disabled { opacity: .4; cursor: not-allowed; }
+    .slot-btns .remove { color: var(--red); border-color: var(--red); }
+
+    .concert-list { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .75rem; }
+    @media (max-width: 640px) { .concert-list { grid-template-columns: 1fr; } }
+    .concert-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: .6rem .75rem; border: 1px solid var(--gray-200); border-radius: var(--radius);
+      background: var(--white); cursor: pointer; transition: background .1s;
+    }
+    .concert-item:hover:not(.chosen):not(.full) { background: var(--gray-50); border-color: var(--blue); }
+    .concert-item.chosen { background: var(--green-pale); border-color: var(--green); cursor: default; opacity: .85; }
+    .concert-item.full { opacity: .55; cursor: not-allowed; }
+    .concert-meta { display: flex; flex-direction: column; }
+    .concert-name { font-weight: 600; color: var(--gray-800); }
+    .concert-date { font-size: .85rem; color: var(--gray-500); }
+
+    .actions { display: flex; justify-content: flex-end; gap: .75rem; margin-top: 1rem; }
+    button.primary {
+      background: var(--blue); color: white; border: none; padding: .7rem 1.5rem;
+      font-weight: 600; border-radius: var(--radius); cursor: pointer; font-size: 1rem;
+    }
+    button.primary:disabled { background: var(--gray-400); cursor: not-allowed; }
+    button.primary:hover:not(:disabled) { background: var(--blue-light); }
+
+    .alert { padding: .75rem 1rem; border-radius: var(--radius); margin-bottom: 1rem; font-weight: 500; }
+    .alert.error { background: var(--red-pale); color: var(--red); border: 1px solid var(--red); }
+    .alert.info { background: var(--amber-pale); color: var(--amber); border: 1px solid var(--amber); }
+
+    .thank-you { text-align: center; padding: 3rem 1rem; }
+    .thank-you h2 { color: var(--green); margin-bottom: .5rem; }
+    .thank-you p { margin-bottom: .5rem; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="submit-wrap">
+    <div class="brand">
+      <h1>Maine Savings Amphitheater — 2026 Concert Preferences</h1>
+      <p>Pick your top 5 shows in ranked order. You may only submit once.</p>
+    </div>
+
+    <div id="errorBox" class="alert error hidden"></div>
+
+    <div id="closedBox" class="alert info hidden">
+      Submissions are currently closed. Please check back later.
+    </div>
+
+    <form id="submitForm" class="hidden" onsubmit="event.preventDefault(); submitForm();">
+      <div class="card">
+        <h2>Your Info</h2>
+        <div class="grid-2">
+          <div class="field">
+            <label>First Name</label>
+            <input type="text" id="firstName" required maxlength="60" />
+          </div>
+          <div class="field">
+            <label>Last Name</label>
+            <input type="text" id="lastName" required maxlength="60" />
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Phone Number</label>
+            <input type="tel" id="phone" required maxlength="20" placeholder="(207) 555-1234" />
+          </div>
+          <div class="field">
+            <label>Location</label>
+            <select id="location" required>
+              <option value="">— Select —</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <input type="email" id="email" required maxlength="120" placeholder="you@example.com" />
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Your Top 5 Picks</h2>
+        <p style="margin-bottom: .75rem;">Tap a show below to add it. Use the arrows to reorder. Ranked #1 is your top choice.</p>
+        <div id="slotList"></div>
+      </div>
+
+      <div class="card">
+        <h2>Available Concerts</h2>
+        <div id="concertList" class="concert-list"></div>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="primary" id="submitBtn">Submit Preferences</button>
+      </div>
+    </form>
+
+    <div id="thankYou" class="card thank-you hidden">
+      <h2>Thank you!</h2>
+      <p>Your concert preferences have been submitted.</p>
+      <p>You'll be contacted if you're assigned tickets for any of your picks.</p>
+    </div>
+  </div>
+
+  <script>
+    const DEALERSHIPS = [
+      'Ford VW Audi', 'Honda Nissan Volvo', 'Kia', 'Value Center', 'CVC',
+      'Corporate', 'Agency', 'Greenpoint', 'Automall', 'Chevy',
+      '44 Downeast', 'Newport', 'Augusta', 'Brunswick',
+    ];
+
+    let apiUrl = '';
+    let concerts = [];
+    let selections = [null, null, null, null, null];
+
+    async function loadConfig() {
+      const r = await fetch('/config.json', { cache: 'no-cache' });
+      const cfg = await r.json();
+      apiUrl = cfg.apiUrl.replace(/\/$/, '');
+    }
+
+    async function loadConcerts() {
+      const r = await fetch(`${apiUrl}/concerts`);
+      if (!r.ok) throw new Error(`Failed to load concerts (HTTP ${r.status})`);
+      const data = await r.json();
+      concerts = (data || []).slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    }
+
+    function populateDealerships() {
+      const sel = document.getElementById('location');
+      for (const d of DEALERSHIPS) {
+        const opt = document.createElement('option');
+        opt.value = d; opt.textContent = d;
+        sel.appendChild(opt);
+      }
+    }
+
+    function formatDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso + 'T00:00:00');
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function renderSlots() {
+      const host = document.getElementById('slotList');
+      host.innerHTML = '';
+      for (let i = 0; i < 5; i++) {
+        const pick = selections[i];
+        const row = document.createElement('div');
+        row.className = 'slot-row' + (pick ? ' filled' : '');
+        const concert = pick ? concerts.find(c => c.concertId === pick) : null;
+        const canUp = i > 0 && !!pick;
+        const canDown = i < 4 && !!pick && !!selections[i + 1];
+        row.innerHTML = `
+          <div class="slot-rank">#${i + 1}</div>
+          <div class="slot-name">${
+            pick
+              ? `<strong>${concert?.artist || concert?.name || 'Unknown'}</strong>
+                 <span style="color:var(--gray-500); font-size:.85rem; margin-left:.5rem;">${formatDate(concert?.date)}</span>`
+              : '<span class="slot-empty">— empty —</span>'
+          }</div>
+          <div class="slot-btns">
+            <button type="button" ${canUp ? '' : 'disabled'} data-act="up" data-i="${i}" title="Move up">&#9650;</button>
+            <button type="button" ${canDown ? '' : 'disabled'} data-act="down" data-i="${i}" title="Move down">&#9660;</button>
+            <button type="button" class="remove" ${pick ? '' : 'disabled'} data-act="remove" data-i="${i}" title="Remove">&times;</button>
+          </div>`;
+        host.appendChild(row);
+      }
+      host.querySelectorAll('button[data-act]').forEach(b => {
+        b.addEventListener('click', () => {
+          const i = Number(b.dataset.i);
+          const act = b.dataset.act;
+          if (act === 'up') moveSlot(i, -1);
+          else if (act === 'down') moveSlot(i, 1);
+          else if (act === 'remove') removeSlot(i);
+        });
+      });
+    }
+
+    function renderConcerts() {
+      const host = document.getElementById('concertList');
+      host.innerHTML = '';
+      const chosen = new Set(selections.filter(Boolean));
+      const full = chosen.size >= 5;
+      for (const c of concerts) {
+        const isChosen = chosen.has(c.concertId);
+        const div = document.createElement('div');
+        div.className = 'concert-item' + (isChosen ? ' chosen' : full ? ' full' : '');
+        div.innerHTML = `
+          <div class="concert-meta">
+            <span class="concert-name">${c.artist || c.name || 'Unknown'}</span>
+            <span class="concert-date">${formatDate(c.date)}</span>
+          </div>
+          <div style="font-size:.85rem; color:var(--gray-500);">${isChosen ? '✓ picked' : full ? '' : 'Click to add'}</div>`;
+        if (!isChosen && !full) {
+          div.addEventListener('click', () => addConcert(c.concertId));
+        }
+        host.appendChild(div);
+      }
+    }
+
+    function addConcert(concertId) {
+      const idx = selections.findIndex(s => s === null);
+      if (idx === -1) return;
+      selections[idx] = concertId;
+      renderSlots();
+      renderConcerts();
+    }
+
+    function removeSlot(i) {
+      selections[i] = null;
+      selections = [...selections.filter(Boolean), null, null, null, null, null].slice(0, 5);
+      renderSlots();
+      renderConcerts();
+    }
+
+    function moveSlot(i, dir) {
+      const j = i + dir;
+      if (j < 0 || j > 4) return;
+      if (!selections[i]) return;
+      const tmp = selections[i];
+      selections[i] = selections[j];
+      selections[j] = tmp;
+      renderSlots();
+    }
+
+    function showError(msg) {
+      const box = document.getElementById('errorBox');
+      box.textContent = msg;
+      box.classList.remove('hidden');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    function clearError() { document.getElementById('errorBox').classList.add('hidden'); }
+
+    async function submitForm() {
+      clearError();
+      const firstName = document.getElementById('firstName').value.trim();
+      const lastName = document.getElementById('lastName').value.trim();
+      const phone = document.getElementById('phone').value.trim();
+      const location = document.getElementById('location').value;
+      const email = document.getElementById('email').value.trim();
+
+      if (!firstName || !lastName || !phone || !location || !email) {
+        return showError('Please complete all required fields.');
+      }
+      const picks = selections.filter(Boolean);
+      if (picks.length === 0) {
+        return showError('Please pick at least one concert.');
+      }
+      const preferences = picks.map((concertId, idx) => ({ rank: idx + 1, concertId }));
+
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+      btn.textContent = 'Submitting…';
+      try {
+        const r = await fetch(`${apiUrl}/public/preferences`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ firstName, lastName, phone, location, email, preferences }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          btn.disabled = false;
+          btn.textContent = 'Submit Preferences';
+          return showError(data.error || `Submission failed (HTTP ${r.status})`);
+        }
+        document.getElementById('submitForm').classList.add('hidden');
+        document.getElementById('thankYou').classList.remove('hidden');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Submit Preferences';
+        showError('Network error — please try again.');
+      }
+    }
+
+    (async () => {
+      try {
+        await loadConfig();
+        await loadConcerts();
+        populateDealerships();
+        renderSlots();
+        renderConcerts();
+        document.getElementById('submitForm').classList.remove('hidden');
+      } catch (err) {
+        showError(err.message || 'Failed to load form.');
+      }
+    })();
+  </script>
+</body>
+</html>

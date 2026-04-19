@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const TENANT_ID = process.env.AZURE_TENANT_ID;
 const CLIENT_ID = process.env.AZURE_CLIENT_ID;
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+const ADMIN_EMAILS   = (process.env.ADMIN_EMAILS   || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
 
 let cachedKeys = null;
 let cacheExpiry = 0;
@@ -106,10 +107,11 @@ exports.handler = async (event) => {
     const email = payload.preferred_username || payload.email || payload.upn || '';
     const name = payload.name || email.split('@')[0] || 'Unknown';
 
-    // Admin: check JWT roles claim first, then ADMIN_USER_IDS env var fallback
+    // Admin: JWT roles claim, ADMIN_USER_IDS (Azure OIDs), or ADMIN_EMAILS env var
     const jwtRoles = Array.isArray(payload.roles) ? payload.roles : [];
     const isAdmin = jwtRoles.some(r => ['Admin', 'WaterfrontAdmin'].includes(r)) ||
-                    ADMIN_USER_IDS.includes(userId);
+                    ADMIN_USER_IDS.includes(userId) ||
+                    ADMIN_EMAILS.includes((email || '').toLowerCase());
 
     console.log(`Auth OK: userId=${userId} role=${isAdmin ? 'admin' : 'employee'} aud=${payload.aud} roles=${JSON.stringify(jwtRoles)}`);
     // Wildcard ARN so the cached policy covers all API methods, not just the triggering one

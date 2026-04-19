@@ -1,8 +1,15 @@
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const crypto = require('crypto');
 
 const client = new DynamoDBClient({});
 const db = DynamoDBDocumentClient.from(client);
+
+const DEALERSHIPS = [
+  'Ford VW Audi', 'Honda Nissan Volvo', 'Kia', 'Value Center', 'CVC',
+  'Corporate', 'Agency', 'Greenpoint', 'Automall', 'Chevy',
+  '44 Downeast', 'Newport', 'Augusta', 'Brunswick',
+];
 
 const PREFERENCES_TABLE = process.env.PREFERENCES_TABLE;
 const EMPLOYEES_TABLE = process.env.EMPLOYEES_TABLE;
@@ -126,6 +133,65 @@ async function submitPreferences(event) {
   return res(200, item);
 }
 
+async function submitExternalPreferences(event) {
+  const body = JSON.parse(event.body || '{}');
+  const season = await getCurrentSeason();
+
+  const open = await isSubmissionsOpen();
+  if (!open) return res(403, { error: 'Submissions are currently closed' });
+
+  const firstName = (body.firstName || '').trim();
+  const lastName = (body.lastName || '').trim();
+  const phone = (body.phone || '').trim();
+  const location = (body.location || '').trim();
+  const email = (body.email || '').trim().toLowerCase();
+
+  if (!firstName) return res(400, { error: 'First name is required' });
+  if (!lastName) return res(400, { error: 'Last name is required' });
+  if (!phone) return res(400, { error: 'Phone number is required' });
+  if (!location) return res(400, { error: 'Location is required' });
+  if (!DEALERSHIPS.includes(location)) return res(400, { error: 'Invalid location' });
+  if (!email) return res(400, { error: 'Email is required' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res(400, { error: 'Invalid email address' });
+  }
+
+  const preferences = body.preferences || [];
+  if (preferences.length === 0) return res(400, { error: 'At least one preference is required' });
+  if (preferences.length > 5) return res(400, { error: 'Maximum 5 preferences allowed' });
+
+  const ranks = preferences.map(p => p.rank);
+  const concertIds = preferences.map(p => p.concertId);
+  if (new Set(ranks).size !== ranks.length) return res(400, { error: 'Duplicate ranks are not allowed' });
+  if (new Set(concertIds).size !== concertIds.length) return res(400, { error: 'Duplicate concert selections are not allowed' });
+  if (ranks.some(r => r < 1 || r > 5)) return res(400, { error: 'Ranks must be between 1 and 5' });
+
+  for (const concertId of concertIds) {
+    const concert = await db.send(new GetCommand({ TableName: CONCERTS_TABLE, Key: { concertId } }));
+    if (!concert.Item) return res(400, { error: `Concert not found: ${concertId}` });
+    if (concert.Item.season !== season) return res(400, { error: `Concert ${concertId} is not in the current season` });
+  }
+
+  const userId = `external-${crypto.randomUUID()}`;
+  const fullName = `${firstName} ${lastName}`.trim();
+  const item = {
+    userId,
+    season,
+    preferences: preferences.sort((a, b) => a.rank - b.rank),
+    employeeName: fullName,
+    employeeEmail: email,
+    firstName,
+    lastName,
+    phone,
+    location,
+    submissionType: 'external',
+    submittedAt: new Date().toISOString(),
+  };
+
+  await db.send(new PutCommand({ TableName: PREFERENCES_TABLE, Item: item }));
+  return res(200, { ok: true, submittedAt: item.submittedAt });
+}
+
 async function getAllPreferences(event) {
   const user = getUser(event);
   if (user.role !== 'admin') return res(403, { error: 'Admin only' });
@@ -210,6 +276,7 @@ exports.handler = async (event) => {
     const resource = event.resource;
     const userId = event.pathParameters?.userId;
 
+    if (resource === '/public/preferences' && method === 'POST')   return submitExternalPreferences(event);
     if (resource === '/preferences/me' && method === 'GET')        return getMyPreferences(event);
     if (resource === '/preferences' && method === 'POST')          return submitPreferences(event);
     if (resource === '/preferences' && method === 'GET')           return getAllPreferences(event);

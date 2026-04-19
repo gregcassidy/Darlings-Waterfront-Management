@@ -42,7 +42,7 @@
   <div class="brand">🎵 Darling's Waterfront <span>Admin</span></div>
   <div class="header-right">
     <span class="user-info" id="userDisplay"></span>
-    <a href="/index.html" class="admin-link">Employee View</a>
+    <a href="/index.html?view=employee" class="admin-link">Employee View</a>
     <button class="btn btn-outline btn-sm" onclick="Auth.logout()">Sign Out</button>
   </div>
 </header>
@@ -256,6 +256,45 @@
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="Admin.closeAssignModal()">Cancel</button>
       <button class="btn btn-primary" onclick="Admin.saveAssignment()">Assign</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ GUEST ASSIGN-TO-CONCERT MODAL ═══ -->
+<div class="modal-overlay hidden" id="guestAssignModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="guestAssignModalTitle">Assign Guest to Concert</h2>
+      <button class="btn-close" onclick="Admin.closeGuestAssignModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Concert <span style="color:var(--red)">*</span></label>
+        <select class="form-control" id="guestAssignConcert" onchange="Admin.onGuestAssignConcertChange()">
+          <option value="">— Select a concert —</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Slot Type <span style="color:var(--red)">*</span></label>
+        <select class="form-control" id="guestAssignSlotType" onchange="Admin.onGuestAssignSlotTypeChange()" disabled>
+          <option value="suite">Suite Ticket</option>
+          <option value="club">Club Ticket</option>
+          <option value="suiteParking">Suite Parking</option>
+          <option value="bsbParking">BSB Parking</option>
+          <option value="hotel">Hotel Room</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Slot # <span style="color:var(--red)">*</span></label>
+        <select class="form-control" id="guestAssignSlotNumber" disabled>
+          <option value="">— Pick a concert first —</option>
+        </select>
+      </div>
+      <div id="guestAssignError" class="alert alert-error hidden"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="Admin.closeGuestAssignModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="Admin.saveGuestAssignment()">Assign</button>
     </div>
   </div>
 </div>

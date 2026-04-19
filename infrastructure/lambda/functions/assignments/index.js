@@ -103,6 +103,9 @@ async function getConcertAssignmentsHandler(concertId, event) {
         userId: pref.userId,
         name: pref.employeeName,
         email: pref.employeeEmail,
+        phone: pref.phone || '',
+        location: pref.location || '',
+        submissionType: pref.submissionType || 'employee',
         rank: choice.rank,
         submittedAt: pref.submittedAt,
       });
