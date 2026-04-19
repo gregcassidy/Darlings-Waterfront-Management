@@ -145,19 +145,38 @@ const Admin = (() => {
     // Requests
     const requests = data.requests || [];
     document.getElementById('requestCount').textContent = requests.length;
+    // Enrich requests with employee profile data
+    let employeeMap = {};
+    try {
+      const employees = await Auth.apiRequest('/employees') || [];
+      for (const e of employees) employeeMap[e.userId] = e;
+    } catch (e) {}
+
     const reqContainer = document.getElementById('requestsList');
     if (!requests.length) {
       reqContainer.innerHTML = '<p class="text-sm text-muted" style="padding:.5rem 0;">No employee requests yet.</p>';
     } else {
-      reqContainer.innerHTML = requests.map(r => `
-        <div class="request-row">
-          <div class="request-rank">${r.rank}</div>
-          <div style="flex:1;">
-            <div class="font-medium text-sm">${r.name}</div>
-            <div class="text-xs text-muted">${r.email}</div>
-          </div>
-          <span class="badge badge-blue">Choice #${r.rank}</span>
-        </div>`).join('');
+      reqContainer.innerHTML = requests.map(r => {
+        const profile = employeeMap[r.userId] || {};
+        const details = [profile.jobTitle, profile.officeLocation].filter(Boolean).join(' · ');
+        const phone = profile.businessPhone || '';
+        const personalEmail = profile.personalEmail || r.personalEmail || '';
+        return `
+          <div class="request-row">
+            <div class="request-rank">${r.rank}</div>
+            <div style="flex:1;overflow:hidden;">
+              <div class="font-medium text-sm">${r.name}</div>
+              ${details ? `<div class="text-xs text-muted">${details}</div>` : ''}
+              <div class="text-xs" style="margin-top:.15rem;">
+                ${phone ? `<span style="color:var(--gray-600);">📞 ${phone}</span>` : ''}
+                ${personalEmail
+                  ? `<span style="color:var(--blue);margin-left:${phone?'.5rem':'0'};">✉ ${personalEmail}</span>`
+                  : `<span style="color:var(--red);">⚠ No personal email</span>`}
+              </div>
+            </div>
+            <span class="badge badge-blue">Choice #${r.rank}</span>
+          </div>`;
+      }).join('');
     }
 
     // Slot grids
@@ -269,11 +288,21 @@ const Admin = (() => {
     document.getElementById('manualEmail').value = '';
     document.getElementById('manualPhone').value = '';
 
-    // Populate employee dropdown from requests
+    // Populate employee dropdown from requests (with profile enrichment)
     const requests = currentDetail?.requests || [];
+    let employeeMap = {};
+    try {
+      const employees = await Auth.apiRequest('/employees') || [];
+      for (const e of employees) employeeMap[e.userId] = e;
+    } catch (e) {}
+
     const empSelect = document.getElementById('assignEmployeeSelect');
     empSelect.innerHTML = requests.length
-      ? requests.map(r => `<option value="${r.userId}" data-name="${r.name}" data-email="${r.email}">#${r.rank} — ${r.name} (${r.email})</option>`).join('')
+      ? requests.map(r => {
+          const p = employeeMap[r.userId] || {};
+          const label = `#${r.rank} — ${r.name}${p.jobTitle ? ' · ' + p.jobTitle : ''}${p.officeLocation ? ' · ' + p.officeLocation : ''}`;
+          return `<option value="${r.userId}" data-name="${r.name}" data-email="${p.personalEmail || r.email}">${label}</option>`;
+        }).join('')
       : '<option value="">No employee requests for this concert</option>';
 
     // Populate guest dropdown

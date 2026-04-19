@@ -127,6 +127,13 @@ export class ApiStack extends cdk.Stack {
     settings.addMethod('GET', new apigateway.LambdaIntegration(settingsFn), auth);
     settings.addResource('{key}').addMethod('PUT', new apigateway.LambdaIntegration(settingsFn), auth);
 
+    // /employees routes
+    const employees = this.api.root.addResource('employees');
+    employees.addMethod('GET', new apigateway.LambdaIntegration(preferencesFn), auth);
+    const employeeMe = employees.addResource('me');
+    employeeMe.addMethod('GET', new apigateway.LambdaIntegration(preferencesFn), auth);
+    employeeMe.addMethod('PUT', new apigateway.LambdaIntegration(preferencesFn), auth);
+
     // /guests routes (admin only — Jay's external contacts)
     const guests = this.api.root.addResource('guests');
     guests.addMethod('GET', new apigateway.LambdaIntegration(guestsFn), auth);

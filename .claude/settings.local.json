@@ -84,7 +84,8 @@
       "Bash(aws cloudformation:*)",
       "Bash(git -C /workspaces/Darlings-Waterfront-Management status --short)",
       "Bash(ls /workspaces/Darlings-Waterfront-Management/docs/Session_Notes_2026-04-05*)",
-      "Bash(git commit -m ':*)"
+      "Bash(git commit -m ':*)",
+      "Bash(echo \"Deploy started in background \\(PID $!\\)\")"
     ]
   }
 }

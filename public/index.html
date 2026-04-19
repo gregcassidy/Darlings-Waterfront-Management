@@ -24,6 +24,21 @@
     You can view your previous selections below.
   </div>
 
+  <!-- Personal email banner — shown until email is on file -->
+  <div id="emailBanner" class="alert alert-info hidden" style="align-items:flex-start;flex-direction:column;gap:.75rem;">
+    <div>
+      <strong>One more thing before you submit.</strong><br>
+      <span style="font-size:.875rem;">We need your <strong>personal email address</strong> to send ticket information.
+      Your Darling's work email cannot receive ticket confirmations.</span>
+    </div>
+    <div class="flex gap-2 items-center" style="flex-wrap:wrap;">
+      <input type="email" id="bannerPersonalEmail" class="form-control" placeholder="your@personalemail.com"
+             style="max-width:280px;" />
+      <button class="btn btn-primary btn-sm" onclick="App.saveBannerEmail()">Save Email</button>
+      <span id="bannerEmailMsg" style="font-size:.8rem;"></span>
+    </div>
+  </div>
+
   <div class="tabs">
     <button class="tab-btn active" onclick="showTab('preferences', this)">Submit Preferences</button>
     <button class="tab-btn" onclick="showTab('mytickets', this)">My Tickets</button>
@@ -44,6 +59,19 @@
 
           <div class="pref-slots" id="prefSlots">
             <!-- rendered by app.js -->
+          </div>
+
+          <!-- Personal email (required for submission) -->
+          <div class="form-group" style="margin-bottom:1rem;padding-top:.75rem;border-top:1px solid var(--gray-100);">
+            <label class="form-label" for="personalEmail">
+              Personal Email for Ticket Notifications
+              <span style="color:var(--red);margin-left:.2rem;">*</span>
+            </label>
+            <input type="email" class="form-control" id="personalEmail"
+                   placeholder="your@personalemail.com" oninput="App.onPersonalEmailChange()" />
+            <p class="text-xs text-muted mt-1">
+              Tickets are sent to your personal email — your work email can't receive them.
+            </p>
           </div>
 
           <button class="btn btn-primary w-full" id="submitBtn" onclick="App.submitPreferences()" disabled>

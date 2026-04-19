@@ -5,6 +5,7 @@ const App = (() => {
   let selections = [null, null, null, null, null]; // index 0 = rank 1
   let existingPrefs = [];
   let submissionsOpen = false;
+  let employeeProfile = null;
 
   async function init() {
     const ok = await Auth.requireAuth();
@@ -15,16 +16,30 @@ const App = (() => {
       document.getElementById('userDisplay').textContent = user.name || user.email;
     }
 
-    // Load settings + concerts + existing preferences in parallel
+    // Load settings + concerts + existing preferences + profile in parallel
+    // Also kick off Graph profile sync in background (fire-and-forget)
+    Auth.fetchGraphProfile().then(gp => { if (gp) Auth.syncProfileToBackend(gp); });
+
     try {
-      const [settings, concertsData, myPrefs] = await Promise.all([
+      const [settings, concertsData, myPrefs, profile] = await Promise.all([
         Auth.apiRequest('/settings'),
         Auth.apiRequest('/concerts?season=2026'),
         Auth.apiRequest('/preferences/me'),
+        Auth.apiRequest('/employees/me').catch(() => null),
       ]);
 
       submissionsOpen = settings?.submissionsOpen === 'true';
       concerts = concertsData || [];
+      employeeProfile = profile;
+
+      // Pre-fill personal email if on file
+      const emailInput = document.getElementById('personalEmail');
+      if (profile?.personalEmail) {
+        emailInput.value = profile.personalEmail;
+        document.getElementById('emailBanner').classList.add('hidden');
+      } else {
+        document.getElementById('emailBanner').classList.remove('hidden');
+      }
 
       // Show admin link if user has admin role (check via API response behaviour)
       // Admin link is shown based on whether GET /preferences returns all employees
@@ -58,6 +73,10 @@ const App = (() => {
     }
   }
 
+  function onPersonalEmailChange() {
+    renderPrefSlots(); // re-evaluate submit button state
+  }
+
   function renderPrefSlots() {
     const container = document.getElementById('prefSlots');
     const filled = selections.filter(Boolean).length;
@@ -65,8 +84,11 @@ const App = (() => {
     document.getElementById('selectionCount').className = filled === 5
       ? 'badge badge-green' : 'badge badge-gray';
 
+    const emailVal = (document.getElementById('personalEmail')?.value || '').trim();
+    const hasEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal);
+
     const submitBtn = document.getElementById('submitBtn');
-    submitBtn.disabled = filled === 0 || !submissionsOpen;
+    submitBtn.disabled = filled === 0 || !submissionsOpen || !hasEmail;
 
     container.innerHTML = '';
     for (let i = 0; i < 5; i++) {
@@ -168,8 +190,22 @@ const App = (() => {
     btn.textContent = 'Submitting…';
     msg.textContent = '';
 
+    const personalEmail = document.getElementById('personalEmail').value.trim().toLowerCase();
+    if (!personalEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personalEmail)) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = '✗ Please enter a valid personal email address.';
+      btn.disabled = false;
+      btn.textContent = 'Submit Preferences';
+      return;
+    }
+
+    // Collect latest Graph profile to send with submission
+    const graphProfile = await Auth.fetchGraphProfile().catch(() => null);
+
     const payload = {
       preferences: filled.map((concertId, idx) => ({ rank: idx + 1, concertId })),
+      personalEmail,
+      profile: graphProfile || {},
     };
 
     try {
@@ -183,6 +219,29 @@ const App = (() => {
       msg.textContent = '✗ ' + err.message;
       btn.textContent = 'Submit Preferences';
       btn.disabled = false;
+    }
+  }
+
+  async function saveBannerEmail() {
+    const input = document.getElementById('bannerPersonalEmail');
+    const msg = document.getElementById('bannerEmailMsg');
+    const email = (input.value || '').trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'Please enter a valid email.';
+      return;
+    }
+    try {
+      await Auth.apiRequest('/employees/me', {
+        method: 'PUT',
+        body: JSON.stringify({ personalEmail: email }),
+      });
+      document.getElementById('personalEmail').value = email;
+      document.getElementById('emailBanner').classList.add('hidden');
+      renderPrefSlots();
+    } catch (e) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'Failed to save: ' + e.message;
     }
   }
 
@@ -266,5 +325,5 @@ const App = (() => {
     return labels[t] || t;
   }
 
-  return { init, submitPreferences, removePick, loadMyTickets };
+  return { init, submitPreferences, removePick, loadMyTickets, onPersonalEmailChange, saveBannerEmail };
 })();

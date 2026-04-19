@@ -1,5 +1,5 @@
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 
 const client = new DynamoDBClient({});
 const db = DynamoDBDocumentClient.from(client);
@@ -36,23 +36,22 @@ async function getCurrentSeason() {
   return result.Item?.value || '2026';
 }
 
-async function ensureEmployeeRecord(user) {
-  try {
-    await db.send(new PutCommand({
-      TableName: EMPLOYEES_TABLE,
-      Item: {
-        userId: user.userId,
-        name: user.name,
-        email: user.email,
-        isAdmin: user.role === 'admin',
-        createdAt: new Date().toISOString(),
-      },
-      ConditionExpression: 'attribute_not_exists(userId)',
-    }));
-  } catch (err) {
-    // ConditionalCheckFailedException = employee already exists, ignore
-    if (err.name !== 'ConditionalCheckFailedException') throw err;
-  }
+async function ensureEmployeeRecord(user, extraFields = {}) {
+  const existing = await db.send(new GetCommand({ TableName: EMPLOYEES_TABLE, Key: { userId: user.userId } }));
+  const now = new Date().toISOString();
+  await db.send(new PutCommand({
+    TableName: EMPLOYEES_TABLE,
+    Item: {
+      ...(existing.Item || {}),
+      userId: user.userId,
+      workEmail: user.email,
+      displayName: user.name,
+      isAdmin: user.role === 'admin',
+      createdAt: existing.Item?.createdAt || now,
+      updatedAt: now,
+      ...extraFields,
+    },
+  }));
 }
 
 async function getMyPreferences(event) {
@@ -97,12 +96,29 @@ async function submitPreferences(event) {
 
   await ensureEmployeeRecord(user);
 
+  const personalEmail = (body.personalEmail || '').trim().toLowerCase();
+  if (!personalEmail) return res(400, { error: 'personalEmail is required' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personalEmail)) {
+    return res(400, { error: 'personalEmail must be a valid email address' });
+  }
+
+  const profile = body.profile || {};
+  await ensureEmployeeRecord(user, {
+    firstName: profile.givenName || '',
+    lastName: profile.surname || '',
+    jobTitle: profile.jobTitle || '',
+    officeLocation: profile.officeLocation || '',
+    businessPhone: (profile.businessPhones || [])[0] || '',
+    personalEmail,
+  });
+
   const item = {
     userId: user.userId,
     season,
     preferences: preferences.sort((a, b) => a.rank - b.rank),
     employeeName: user.name,
     employeeEmail: user.email,
+    personalEmail,
     submittedAt: new Date().toISOString(),
   };
 
@@ -125,6 +141,50 @@ async function getAllPreferences(event) {
   const items = (result.Items || []).sort((a, b) =>
     (a.employeeName || '').localeCompare(b.employeeName || ''));
   return res(200, items);
+}
+
+async function getMyProfile(event) {
+  const user = getUser(event);
+  const result = await db.send(new GetCommand({ TableName: EMPLOYEES_TABLE, Key: { userId: user.userId } }));
+  return res(200, result.Item || { userId: user.userId, workEmail: user.email, displayName: user.name });
+}
+
+async function updateMyProfile(event) {
+  const user = getUser(event);
+  const body = JSON.parse(event.body || '{}');
+
+  const personalEmail = body.personalEmail !== undefined
+    ? (body.personalEmail || '').trim().toLowerCase() : undefined;
+
+  if (personalEmail !== undefined && personalEmail &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personalEmail)) {
+    return res(400, { error: 'personalEmail must be a valid email address' });
+  }
+
+  const extraFields = {
+    ...(body.givenName !== undefined    && { firstName: body.givenName }),
+    ...(body.surname !== undefined      && { lastName: body.surname }),
+    ...(body.displayName !== undefined  && { displayName: body.displayName }),
+    ...(body.jobTitle !== undefined     && { jobTitle: body.jobTitle }),
+    ...(body.officeLocation !== undefined && { officeLocation: body.officeLocation }),
+    ...(body.businessPhones !== undefined && { businessPhone: (body.businessPhones || [])[0] || '' }),
+    ...(personalEmail !== undefined     && { personalEmail }),
+  };
+
+  await ensureEmployeeRecord(user, extraFields);
+  const updated = await db.send(new GetCommand({ TableName: EMPLOYEES_TABLE, Key: { userId: user.userId } }));
+  return res(200, updated.Item);
+}
+
+async function getAllEmployees(event) {
+  const user = getUser(event);
+  if (user.role !== 'admin') return res(403, { error: 'Admin only' });
+
+  const result = await db.send(new ScanCommand({ TableName: EMPLOYEES_TABLE }));
+  const employees = (result.Items || [])
+    .filter(e => !e.isAdmin)
+    .sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+  return res(200, employees);
 }
 
 async function getUserPreferences(userId, event) {
@@ -152,6 +212,9 @@ exports.handler = async (event) => {
     if (resource === '/preferences' && method === 'POST')          return submitPreferences(event);
     if (resource === '/preferences' && method === 'GET')           return getAllPreferences(event);
     if (resource === '/preferences/{userId}' && method === 'GET')  return getUserPreferences(userId, event);
+    if (resource === '/employees/me' && method === 'GET')          return getMyProfile(event);
+    if (resource === '/employees/me' && method === 'PUT')          return updateMyProfile(event);
+    if (resource === '/employees' && method === 'GET')             return getAllEmployees(event);
 
     return res(405, { error: 'Method not allowed' });
   } catch (err) {

@@ -128,6 +128,41 @@ async function getAuthToken() {
   }
 }
 
+// Fetch extended profile from Microsoft Graph (name, title, location, phone)
+async function fetchGraphProfile() {
+  const msalInstance = await initMsal();
+  if (!msalInstance) return null;
+
+  const account = msalInstance.getActiveAccount() || (msalInstance.getAllAccounts()[0] || null);
+  if (!account) return null;
+
+  try {
+    const result = await msalInstance.acquireTokenSilent({
+      account,
+      scopes: ['https://graph.microsoft.com/User.Read'],
+    });
+    const resp = await fetch(
+      'https://graph.microsoft.com/v1.0/me?$select=displayName,givenName,surname,jobTitle,officeLocation,businessPhones,userPrincipalName',
+      { headers: { Authorization: `Bearer ${result.accessToken}` } }
+    );
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (e) {
+    console.warn('Graph profile fetch failed:', e.message);
+    return null;
+  }
+}
+
+// Push Graph profile to our backend (fire-and-forget on login)
+async function syncProfileToBackend(graphProfile) {
+  if (!graphProfile) return;
+  try {
+    await apiRequest('/employees/me', { method: 'PUT', body: JSON.stringify(graphProfile) });
+  } catch (e) {
+    console.warn('Profile sync failed:', e.message);
+  }
+}
+
 function getCurrentUser() {
   if (sessionStorage.getItem('devMode') === 'true') {
     return { name: 'Dev User', email: 'dev@darlings.com', userId: 'dev-user' };
@@ -195,4 +230,4 @@ async function apiRequest(path, options = {}) {
   return data;
 }
 
-window.Auth = { login, logout, getAuthToken, getCurrentUser, isLoggedIn, requireAuth, apiRequest, loadConfig, handleRedirect };
+window.Auth = { login, logout, getAuthToken, getCurrentUser, isLoggedIn, requireAuth, apiRequest, loadConfig, handleRedirect, fetchGraphProfile, syncProfileToBackend };
