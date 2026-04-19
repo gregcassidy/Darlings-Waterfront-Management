@@ -11,14 +11,16 @@
 | S3 Bucket | `darlings-waterfront-frontend-119002863133` |
 | CDK Stack Prefix | `DarlingsWaterfront` |
 | Concert Source | https://www.waterfrontconcerts.com/ |
-| Azure Tenant ID | *(get from IT)* |
-| Azure Client ID | *(get from IT)* |
+| Azure Tenant ID | *(get from IT — update config.json + CDK env)* |
+| Azure Client ID | *(get from IT — update config.json + CDK env)* |
 
 ---
 
 ## What This App Does
 
-Darling's employees select their top-5 concert preferences for the Maine Savings Pavilion season. Admins manage the concert list (synced from waterfrontconcerts.com), assign tickets, issue parking passes, track attendance, and send winner notifications via SES.
+Darling's employees log in via Microsoft SSO and submit their **top-5 ranked concert preferences** for the Maine Savings Amphitheater season. Admins manage the concert list, assign employees (or VIP guests) to numbered ticket/parking slots, track attendance, and send notifications via SES.
+
+Employees only see concert names — ticket type (suite vs. club) is invisible to them. Admin is fully in control of who gets what seat.
 
 ---
 
@@ -26,21 +28,22 @@ Darling's employees select their top-5 concert preferences for the Maine Savings
 
 | Role | Access |
 |------|--------|
-| `admin` | Full access — concerts, preferences, assignments, parking, notifications, settings |
+| `admin` | Full access — concerts, assignments, Jay's Guests, settings |
 | `employee` | Submit/view top-5 preferences, view own ticket assignments |
-| `guest` | Employees without Azure AD — manually enter name + personal email to submit preferences |
+
+Admin is determined by: (1) Azure AD app role `WaterfrontAdmin` in JWT, or (2) `ADMIN_USER_IDS` env var (comma-separated Azure OIDs).
 
 ---
 
 ## Architecture
 
 ```
-CloudFront → S3 (static HTML/JS/CSS)
-           → API Gateway → Lambda Authorizer → Lambda Functions → DynamoDB
-                                                                → SES (emails)
+CloudFront → S3 (login.html, index.html, admin.html, css/, js/)
+           → API Gateway → Lambda Authorizer (Azure AD JWT) → Lambda Functions → DynamoDB
+                                                                                → SES (emails)
 ```
 
-Concert sync scrapes https://www.waterfrontconcerts.com/ (admin-triggered).
+**Auth flow:** MSAL.js (CDN) → Azure AD → Bearer token → Lambda Authorizer validates JWT using Node.js built-in `crypto` (no external deps). Dev mode: if `REPLACE_WITH_TENANT_ID` is still in env, all requests pass as admin.
 
 ---
 
@@ -48,13 +51,14 @@ Concert sync scrapes https://www.waterfrontconcerts.com/ (admin-triggered).
 
 | Table | PK | SK | Purpose |
 |-------|----|----|---------|
-| `WF-Concerts` | concertId | — | Season concert lineup |
-| `WF-Employees` | userId | — | Employee profiles |
-| `WF-Preferences` | userId | season | Top-5 submissions per season |
-| `WF-Assignments` | assignmentId | — | Tickets + parking passes + attendance |
-| `WF-Settings` | settingKey | — | App config (submissionsOpen, currentSeason, etc.) |
+| `WF-Concerts` | concertId | — | Season lineup. concertId format: `2026-01` through `2026-25` |
+| `WF-Employees` | userId | — | Auto-created on first preference submission |
+| `WF-Preferences` | userId | season | Top-5 submissions. `preferences` = [{rank, concertId}] |
+| `WF-Assignments` | assignmentId | — | Per-slot assignments (suite/club/bsbParking/suiteParking) |
+| `WF-Settings` | settingKey | — | `submissionsOpen`, `currentSeason`, `notificationFromEmail` |
+| `WF-JaysGuests` | guestId | — | Jay's private external contact list (admin-only) |
 
-Key settings keys: `submissionsOpen`, `currentSeason`, `notificationFromEmail`
+Concert slot counts per show (admin-configurable): `suiteTicketCount`, `clubTicketCount`, `bsbParkingCount`, `suiteParkingCount`. Defaults: 20/10/20/8.
 
 ---
 
@@ -62,33 +66,36 @@ Key settings keys: `submissionsOpen`, `currentSeason`, `notificationFromEmail`
 
 ```
 ├── docs/
-│   └── PRD-SPEC.md              # Full requirements & data model
+│   ├── PRD-SPEC.md              # Full requirements & data model
+│   └── 2026 WFC Tickets.xlsx   # Admin's spreadsheet — source of truth for season data
 ├── public/                      # Frontend → deployed to S3
-│   ├── index.html               # Main SPA (sections: preferences, my-tickets, concerts, reports, assignments, notifications, settings)
-│   ├── login.html               # Login + guest entry form
-│   ├── config.json              # Runtime config — update after deploy
-│   ├── css/styles.css
+│   ├── login.html               # Microsoft SSO login (MSAL.js)
+│   ├── index.html               # Employee portal (preferences + my tickets)
+│   ├── admin.html               # Admin interface (concerts, Jay's Guests, settings)
+│   ├── config.json              # Runtime config (apiUrl, azureTenantId, azureClientId)
+│   ├── css/styles.css           # Shared styles (navy/blue theme)
 │   └── js/
-│       ├── auth.js              # Azure AD SSO + guest login flow
-│       └── app.js               # Main app logic
+│       ├── auth.js              # MSAL wrapper + apiRequest() helper
+│       ├── app.js               # Employee portal logic
+│       └── admin.js             # Admin portal logic
 ├── infrastructure/
 │   ├── bin/infrastructure.ts    # CDK entry point
 │   ├── lib/
-│   │   ├── database-stack.ts    # DynamoDB (5 tables)
-│   │   ├── storage-stack.ts     # S3 bucket
-│   │   ├── api-stack.ts         # API Gateway + all Lambda functions
-│   │   └── frontend-stack.ts   # CloudFront distribution
+│   │   ├── database-stack.ts    # DynamoDB (6 tables incl. WF-JaysGuests)
+│   │   ├── api-stack.ts         # API Gateway + 6 Lambda functions + authorizer
+│   │   └── frontend-stack.ts    # CloudFront + S3
 │   └── lambda/
 │       ├── functions/
-│       │   ├── auth/            # Lambda authorizer (validates Azure AD JWT + guest tokens)
-│       │   ├── concerts/        # Concert CRUD + sync from waterfrontconcerts.com
-│       │   ├── preferences/     # Employee preference submissions
-│       │   ├── assignments/     # Ticket + parking pass + attendance management
-│       │   ├── notifications/   # SES emails (winner details + all-employee announcements)
-│       │   └── settings/        # App settings + submission window control
+│       │   ├── auth/            # Lambda authorizer — Azure AD JWT via Node crypto
+│       │   ├── concerts/        # CRUD + /seed (2026 data) + /sync (stub)
+│       │   ├── preferences/     # Submit/get top-5
+│       │   ├── assignments/     # Slot management + request tallies
+│       │   ├── guests/          # Jay's Guests CRUD
+│       │   ├── notifications/   # SES emails (stub — needs SES setup)
+│       │   └── settings/        # submissionsOpen, currentSeason, fromEmail
 │       └── shared/
-│           ├── response.ts      # HTTP response helpers
-│           └── auth.ts          # Role checking, user context
+│           ├── response.ts      # HTTP response helpers (TypeScript)
+│           └── auth.ts          # UserContext type + getUserFromEvent
 └── CLAUDE.md
 ```
 
@@ -96,35 +103,31 @@ Key settings keys: `submissionsOpen`, `currentSeason`, `notificationFromEmail`
 
 ## Deployment Commands
 
-### First-time setup
-```bash
-aws configure
-# Account: 119002863133 | Region: us-east-1
-
-cd infrastructure && npm install
-npx cdk bootstrap aws://119002863133/us-east-1
-```
-
-### Deploy infrastructure
+### Deploy infrastructure (includes new WF-JaysGuests table)
 ```bash
 cd infrastructure
-npx cdk deploy --all --require-approval never
-# Or individually:
 npx cdk deploy DarlingsWaterfrontDbStack --require-approval never
-npx cdk deploy DarlingsWaterfrontStorageStack --require-approval never
 npx cdk deploy DarlingsWaterfrontApiStack --require-approval never
-npx cdk deploy DarlingsWaterfrontFrontendStack --require-approval never
 ```
 
 ### Deploy frontend
 ```bash
 aws s3 sync ./public/ s3://darlings-waterfront-frontend-119002863133/ --delete --region us-east-1
-aws cloudfront create-invalidation --distribution-id DIST_ID --paths "/*"
+aws cloudfront create-invalidation --distribution-id E32EW6VUY7FGE7 --paths "/*"
 ```
 
-### Deploy Lambda/API changes only
+### Seed 2026 concert data (run once after deploy)
 ```bash
-cd infrastructure && npx cdk deploy DarlingsWaterfrontApiStack --require-approval never
+# Via the admin interface: Admin → Concerts → "Seed 2026 Data"
+# Or via CLI:
+curl -X POST https://r7wuhspii5.execute-api.us-east-1.amazonaws.com/prod/concerts/seed \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{}'
+```
+
+### Set admin user by Azure OID
+```bash
+# After Greg logs in, find his OID in CloudWatch logs or DynamoDB WF-Employees
+# Then update Lambda env var ADMIN_USER_IDS via CDK or console
 ```
 
 ---
@@ -132,11 +135,16 @@ cd infrastructure && npx cdk deploy DarlingsWaterfrontApiStack --require-approva
 ## Common Tasks
 
 ### Open/close employee submissions
-Use the admin Settings panel in the app, or via CLI:
+Admin Settings panel, or CLI:
 ```bash
 aws dynamodb put-item --table-name WF-Settings \
-  --item '{"settingKey":{"S":"submissionsOpen"},"value":{"S":"true"}}' \
-  --region us-east-1
+  --item '{"settingKey":{"S":"submissionsOpen"},"value":{"S":"true"}}' --region us-east-1
+```
+
+### View Lambda logs
+```bash
+aws logs tail /aws/lambda/DarlingsWaterfrontApiStack-Concerts --follow
+aws logs tail /aws/lambda/DarlingsWaterfrontApiStack-Authorizer --follow
 ```
 
 ### View all preferences for current season
@@ -144,30 +152,28 @@ aws dynamodb put-item --table-name WF-Settings \
 aws dynamodb query --table-name WF-Preferences \
   --index-name season-index \
   --key-condition-expression "season = :s" \
-  --expression-attribute-values '{":s":{"S":"2026"}}' \
-  --region us-east-1
-```
-
-### View Lambda logs
-```bash
-aws logs tail /aws/lambda/DarlingsWaterfrontApiStack-Concerts --follow
+  --expression-attribute-values '{":s":{"S":"2026"}}' --region us-east-1
 ```
 
 ---
 
-## After First Deploy — Update These
+## After Deploy — Complete These Steps
 
-1. **`public/config.json`** — set `apiUrl`, `azureTenantId`, `azureClientId`
-2. **Quick Reference table above** — add CloudFront Distribution ID, App URL, API URL
-3. **Verify SES sender email** in AWS console before notifications will work
+1. **Azure AD** — Create App Registration → get Tenant ID + Client ID
+2. **`public/config.json`** — set `azureTenantId` + `azureClientId`, redeploy frontend
+3. **CDK env** — set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` env vars, redeploy API stack
+4. **Admin access** — log in once, find your Azure OID in logs, set `ADMIN_USER_IDS` env var
+5. **SES** — verify sender email in AWS console
+6. **Seed concerts** — click "Seed 2026 Data" in admin interface
 
 ---
 
 ## Open Items
-- [ ] Get Azure AD App Registration client ID + tenant ID from IT
+- [ ] Get Azure AD App Registration client ID + tenant ID
 - [ ] Verify SES sender email address in AWS console
-- [ ] Share last year's Excel spreadsheet → confirm ticket types + data model
-- [ ] Confirm employee count (affects how many use guest vs Azure AD login)
+- [ ] Deploy updated stacks (WF-JaysGuests table + guests Lambda are new this session)
+- [ ] Seed 2026 concert data after deploy
+- [ ] Set ADMIN_USER_IDS after first login
 
 ---
 
