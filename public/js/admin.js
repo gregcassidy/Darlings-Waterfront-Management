@@ -18,17 +18,20 @@ const Admin = (() => {
     if (!ok) return;
     const user = Auth.getCurrentUser();
     if (user) document.getElementById('userDisplay').textContent = user.name || user.email;
+    // Keep the admin's own employee record in sync with Microsoft Graph (companyName, jobTitle, etc.)
+    Auth.fetchGraphProfile().then(gp => { if (gp) Auth.syncProfileToBackend(gp); });
     loadConcerts();
   }
 
   function showTab(name, btn) {
-    ['concerts', 'guests', 'settings'].forEach(t => {
+    ['concerts', 'submissions', 'guests', 'settings'].forEach(t => {
       document.getElementById(`tab-${t}`).classList.add('hidden');
       document.getElementById(`tab-${t}-btn`).classList.remove('active');
     });
     document.getElementById(`tab-${name}`).classList.remove('hidden');
     btn.classList.add('active');
 
+    if (name === 'submissions') loadSubmissions();
     if (name === 'guests') loadGuests();
     if (name === 'settings') loadSettings();
   }
@@ -78,12 +81,21 @@ const Admin = (() => {
 
     for (const c of concerts) {
       const t = tallyMap[c.concertId] || {};
+      const isCancelled = c.status === 'cancelled';
       const tr = document.createElement('tr');
       tr.className = 'tr-clickable';
+      if (isCancelled) tr.style.opacity = '0.55';
       tr.onclick = () => openConcertDetail(c.concertId);
+      const cancelledBadge = isCancelled
+        ? ' <span class="badge badge-red" style="font-size:.7rem;">CANCELLED</span>' : '';
+      const cancelBtn = isCancelled
+        ? `<button class="btn btn-amber btn-sm" style="margin-left:.25rem;"
+             onclick="event.stopPropagation();Admin.uncancelConcert('${c.concertId}','${escapeAttr(c.name)}')">Uncancel</button>`
+        : `<button class="btn btn-danger btn-sm" style="margin-left:.25rem;"
+             onclick="event.stopPropagation();Admin.cancelConcert('${c.concertId}','${escapeAttr(c.name)}')">Cancel</button>`;
       tr.innerHTML = `
         <td>${c.showNumber}</td>
-        <td>${c.name}</td>
+        <td>${c.name}${cancelledBadge}</td>
         <td>${formatDate(c.date)}</td>
         <td>${c.day}</td>
         <td>${c.hotelRooms ? `<span class="badge badge-amber">${c.hotelRooms} rooms</span>` : '<span class="text-muted text-xs">—</span>'}</td>
@@ -92,7 +104,10 @@ const Admin = (() => {
         <td class="tally-cell"><span class="tally-num">${t[3]||0}</span></td>
         <td class="tally-cell"><span class="tally-num">${t[4]||0}</span></td>
         <td class="tally-cell"><span class="tally-num">${t[5]||0}</span></td>
-        <td><button class="btn btn-outline btn-sm" onclick="event.stopPropagation();Admin.openConcertDetail('${c.concertId}')">Manage →</button></td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();Admin.openConcertDetail('${c.concertId}')">Manage →</button>
+          ${cancelBtn}
+        </td>
       `;
       tbody.appendChild(tr);
     }
@@ -189,7 +204,7 @@ const Admin = (() => {
               const profile = employeeMap[r.userId] || {};
               const details = isExternal
                 ? [r.location, r.phone].filter(Boolean).join(' · ')
-                : [profile.jobTitle, profile.officeLocation].filter(Boolean).join(' · ');
+                : [profile.jobTitle, profile.location].filter(Boolean).join(' · ');
               const email = isExternal ? (r.email || '') : (profile.personalEmail || r.email || '');
               const assigned = assignedMap[r.userId];
               const rowClass = assigned
@@ -264,6 +279,80 @@ const Admin = (() => {
     const rows = [['Slot', 'Name', 'Email', 'Phone']];
     for (const s of slots) rows.push([s.slotNumber, s.name || '', resolveEmail(s), s.phone || '']);
     downloadCsv(`${concertSlug(currentDetail.concert)}_${sectionKey}_emails.csv`, rows);
+  }
+
+  function htmlEscape(s) {
+    return (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  function printCheckinSheet(sectionKey) {
+    if (!currentDetail) return;
+    const concert = currentDetail.concert;
+    const slots = (currentDetail.slotGrids?.[sectionKey] || [])
+      .filter(s => s.assignmentId)
+      .sort((a, b) => a.slotNumber - b.slotNumber);
+    if (!slots.length) {
+      alert(`No assignments in ${SECTION_LABELS[sectionKey] || sectionKey} to print.`);
+      return;
+    }
+    const sectionLabel = SECTION_LABELS[sectionKey] || sectionKey;
+    const dateStr = formatDate(concert.date);
+    const subtitle = [dateStr, concert.doorsTime ? `Doors ${concert.doorsTime}` : '', concert.musicTime ? `Music ${concert.musicTime}` : '']
+      .filter(Boolean).join(' · ');
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${htmlEscape(sectionLabel)} — ${htmlEscape(concert.name)}</title>
+<style>
+  @page { margin: .5in; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 0; padding: 1rem; }
+  h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
+  h2 { margin: 0 0 .5rem; font-size: 1rem; color: #333; font-weight: 600; }
+  .meta { font-size: .85rem; color: #555; margin-bottom: 1.25rem; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #999; padding: .45rem .5rem; text-align: left; font-size: .9rem; vertical-align: top; }
+  th { background: #f0f0f0; font-weight: 600; }
+  .col-check { width: 1.6rem; text-align: center; font-size: 1.4rem; line-height: 1; }
+  .col-slot  { width: 3rem; text-align: center; }
+  .col-sig   { width: 28%; }
+  .footer { margin-top: 1.5rem; font-size: .75rem; color: #666; display: flex; justify-content: space-between; }
+  .toolbar { margin-bottom: 1rem; }
+  .toolbar button { padding: .5rem 1rem; font-size: .9rem; cursor: pointer; }
+  @media print { .toolbar { display: none; } body { padding: 0; } }
+</style></head>
+<body>
+  <div class="toolbar"><button onclick="window.print()">Print this sheet</button></div>
+  <h1>${htmlEscape(sectionLabel)} — Check-in Sheet</h1>
+  <h2>${htmlEscape(concert.name)}</h2>
+  <div class="meta">${htmlEscape(subtitle)}<br>${htmlEscape(concert.venue || 'Maine Savings Amphitheater')}</div>
+  <table>
+    <thead><tr>
+      <th class="col-check">☐</th>
+      <th class="col-slot">Slot</th>
+      <th>Name</th>
+      <th>Phone</th>
+      <th class="col-sig">Signature</th>
+    </tr></thead>
+    <tbody>
+      ${slots.map(s => `<tr>
+        <td class="col-check">☐</td>
+        <td class="col-slot">#${s.slotNumber}</td>
+        <td>${htmlEscape(s.name || '')}</td>
+        <td>${htmlEscape(s.phone || '')}</td>
+        <td class="col-sig">&nbsp;</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+  <div class="footer">
+    <span>${slots.length} attendee${slots.length === 1 ? '' : 's'}</span>
+    <span>Printed ${new Date().toLocaleString('en-US')}</span>
+  </div>
+</body></html>`;
+
+    const w = window.open('', '_blank');
+    if (!w) { alert('Pop-up blocked — please allow pop-ups for this site.'); return; }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) {} };
   }
 
   function exportAllEmails() {
@@ -352,9 +441,10 @@ const Admin = (() => {
         <div class="card slot-section">
           <div class="card-header">
             <h3>${icon} ${label}</h3>
-            <div style="display:flex;align-items:center;gap:.5rem;">
+            <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;">
               <span class="badge ${filled === slots.length ? 'badge-green' : 'badge-gray'}">${filled}/${slots.length}</span>
               ${filled > 0 ? `<button class="btn btn-sm btn-secondary" style="padding:.2rem .5rem;font-size:.7rem;" onclick="Admin.exportSectionEmails('${key}')" title="Export emails for this section">⬇ CSV</button>` : ''}
+              ${filled > 0 && key === 'club' ? `<button class="btn btn-sm btn-blue" style="padding:.2rem .5rem;font-size:.7rem;" onclick="Admin.printCheckinSheet('club')" title="Open a printable check-in sheet">🖨 Check-in Sheet</button>` : ''}
             </div>
           </div>
           ${hotelNotes}
@@ -362,7 +452,7 @@ const Admin = (() => {
             ${slots.map(slot => {
               const isAssigned = !!slot.assignmentId;
               const profile = slot.userId ? (employeeMap[slot.userId] || {}) : {};
-              const personDetails = [profile.jobTitle, profile.officeLocation].filter(Boolean).join(' · ');
+              const personDetails = [profile.jobTitle, profile.location].filter(Boolean).join(' · ');
               const roomDetail = key === 'hotel'
                 ? (concert.hotelRoomDetails || [])[slot.slotNumber - 1] : null;
               const roomInfo = roomDetail
@@ -381,8 +471,16 @@ const Admin = (() => {
                     }
                   </div>
                   ${isAssigned
-                    ? `<button class="btn btn-sm btn-danger" style="padding:.2rem .5rem;font-size:.7rem;flex-shrink:0;"
-                         onclick="Admin.removeAssignment('${slot.assignmentId}','${key}',${slot.slotNumber})">✕</button>`
+                    ? `<div class="flex gap-1" style="flex-shrink:0;">
+                         <button class="btn btn-sm ${slot.attended ? 'btn-success' : 'btn-outline'}"
+                                 style="padding:.2rem .5rem;font-size:.75rem;min-width:1.8rem;"
+                                 title="${slot.attended ? 'Attended — click to mark not attended' : 'Mark attended'}"
+                                 onclick="Admin.toggleAttended('${slot.assignmentId}', ${!slot.attended})">
+                           ${slot.attended ? '✓' : '○'}
+                         </button>
+                         <button class="btn btn-sm btn-danger" style="padding:.2rem .5rem;font-size:.7rem;"
+                           onclick="Admin.removeAssignment('${slot.assignmentId}','${key}',${slot.slotNumber})">✕</button>
+                       </div>`
                     : `<button class="btn btn-sm btn-blue" style="padding:.2rem .5rem;font-size:.7rem;flex-shrink:0;"
                          onclick="Admin.openAssignModal('${key}',${slot.slotNumber})">+</button>`
                   }
@@ -459,7 +557,7 @@ const Admin = (() => {
     empSelect.innerHTML = requests.length
       ? requests.map(r => {
           const p = employeeMap[r.userId] || {};
-          const label = `#${r.rank} — ${r.name}${p.jobTitle ? ' · ' + p.jobTitle : ''}${p.officeLocation ? ' · ' + p.officeLocation : ''}`;
+          const label = `#${r.rank} — ${r.name}${p.jobTitle ? ' · ' + p.jobTitle : ''}${p.location ? ' · ' + p.location : ''}`;
           return `<option value="${r.userId}" data-name="${r.name}" data-email="${p.personalEmail || r.email}">${label}</option>`;
         }).join('')
       : '<option value="">No employee requests for this concert</option>';
@@ -819,9 +917,7 @@ const Admin = (() => {
     document.getElementById('settingsForm').classList.add('hidden');
     try {
       const settings = await Auth.apiRequest('/settings');
-      const open = settings.submissionsOpen === 'true';
-      document.getElementById('subsStatus').textContent = open ? 'OPEN' : 'CLOSED';
-      document.getElementById('subsStatus').className = `badge ${open ? 'badge-green' : 'badge-red'}`;
+      renderSubmissionMode(settings.submissionsStatus || 'closed');
       document.getElementById('seasonInput').value = settings.currentSeason || '2026';
       document.getElementById('fromEmailInput').value = settings.notificationFromEmail || '';
       document.getElementById('settingsForm').classList.remove('hidden');
@@ -833,13 +929,31 @@ const Admin = (() => {
     }
   }
 
-  async function setSubmissions(open) {
+  function renderSubmissionMode(mode) {
+    const badge = document.getElementById('subsStatus');
+    const labels = { open: 'OPEN', limited: 'LIMITED', closed: 'CLOSED' };
+    const cls    = { open: 'badge-green', limited: 'badge-amber', closed: 'badge-red' };
+    badge.textContent = labels[mode] || 'UNKNOWN';
+    badge.className = `badge ${cls[mode] || 'badge-gray'}`;
+
+    const buttons = {
+      open: document.getElementById('modeOpenBtn'),
+      limited: document.getElementById('modeLimitedBtn'),
+      closed: document.getElementById('modeClosedBtn'),
+    };
+    const variant = { open: 'btn-success', limited: 'btn-amber', closed: 'btn-danger' };
+    for (const [key, btn] of Object.entries(buttons)) {
+      btn.className = `btn btn-sm ${mode === key ? variant[key] : 'btn-outline'}`;
+    }
+  }
+
+  async function setSubmissionMode(mode) {
     try {
-      await Auth.apiRequest('/settings/submissionsOpen', {
+      await Auth.apiRequest('/settings/submissionsStatus', {
         method: 'PUT',
-        body: JSON.stringify({ value: open ? 'true' : 'false' }),
+        body: JSON.stringify({ value: mode }),
       });
-      showSettingsMsg(`Submissions ${open ? 'opened' : 'closed'} ✓`);
+      showSettingsMsg(`Mode set to ${mode} ✓`);
       loadSettings();
     } catch (err) { showSettingsMsg('Failed: ' + err.message, true); }
   }
@@ -866,6 +980,321 @@ const Admin = (() => {
     el.style.color = isError ? 'var(--red)' : 'var(--green)';
     el.textContent = msg;
     setTimeout(() => { el.textContent = ''; }, 3000);
+  }
+
+  // ── All Submissions Spreadsheet ───────────────────────────
+
+  const SUB_COLUMNS = [
+    { key: 'lastName',       label: 'Last Name',  filter: 'text',    sortable: true },
+    { key: 'firstName',      label: 'First Name', filter: 'text',    sortable: true },
+    { key: 'location',       label: 'Location',   filter: 'text',    sortable: true },
+    { key: 'submissionType', label: 'Type',       filter: 'select',
+      options: [['', 'All'], ['employee', 'Employee'], ['external', 'External']], sortable: true },
+    { key: 'choice1', label: 'Choice 1', filter: 'choice', choiceIdx: 0, sortable: true },
+    { key: 'choice2', label: 'Choice 2', filter: 'choice', choiceIdx: 1, sortable: true },
+    { key: 'choice3', label: 'Choice 3', filter: 'choice', choiceIdx: 2, sortable: true },
+    { key: 'choice4', label: 'Choice 4', filter: 'choice', choiceIdx: 3, sortable: true },
+    { key: 'choice5', label: 'Choice 5', filter: 'choice', choiceIdx: 4, sortable: true },
+    { key: 'canEditFreely', label: 'Override', filter: 'select',
+      options: [['', 'All'], ['yes', 'On'], ['no', 'Off']], sortable: true },
+  ];
+
+  const COLOR_OPTIONS = [
+    ['', 'All'],
+    ['attended',   '🟩 Attended'],
+    ['assigned',   '🟨 Assigned'],
+    ['unassigned', '⬜ No tickets'],
+    ['empty',      '▢ Empty rank'],
+  ];
+
+  const DEALERSHIPS = [
+    'Ford VW Audi', 'Honda Nissan Volvo', 'Kia', 'Value Center', 'CVC',
+    'Corporate', 'Agency', 'Greenpoint', 'Automall', 'Chevy',
+    '44 Downeast', 'Newport', 'Augusta', 'Brunswick',
+  ];
+
+  let subState = {
+    data: [],
+    dealerships: DEALERSHIPS,
+    sortBy: 'lastName',
+    sortDir: 'asc',
+    search: '',
+    filters: {},
+  };
+
+  function resetSubFilters() {
+    subState.search = '';
+    subState.filters = {
+      lastName: '', firstName: '', location: '', submissionType: '',
+      canEditFreely: '',
+      choice1Text: '', choice1Color: '',
+      choice2Text: '', choice2Color: '',
+      choice3Text: '', choice3Color: '',
+      choice4Text: '', choice4Color: '',
+      choice5Text: '', choice5Color: '',
+    };
+  }
+
+  function clearSubmissionsFilters() {
+    resetSubFilters();
+    const searchEl = document.getElementById('submissionsSearch');
+    if (searchEl) searchEl.value = '';
+    renderSubmissionsHeader();
+    renderSubmissionsBody();
+  }
+
+  function onSubmissionsSearch(value) {
+    subState.search = value || '';
+    renderSubmissionsBody();
+  }
+
+  async function loadSubmissions() {
+    document.getElementById('submissionsLoading').classList.remove('hidden');
+    document.getElementById('submissionsWrap').classList.add('hidden');
+    try {
+      const result = await Auth.apiRequest('/admin/all-submissions?season=2026');
+      subState.data = result?.submissions || [];
+      if (result?.dealerships?.length) subState.dealerships = result.dealerships;
+      resetSubFilters();
+      subState.sortBy = 'lastName';
+      subState.sortDir = 'asc';
+      const searchEl = document.getElementById('submissionsSearch');
+      if (searchEl) searchEl.value = '';
+      renderSubmissionsHeader();
+      renderSubmissionsBody();
+      document.getElementById('submissionsWrap').classList.remove('hidden');
+      document.getElementById('submissionsToolbar').classList.remove('hidden');
+    } catch (err) {
+      document.getElementById('submissionsLoading').innerHTML =
+        `<div class="alert alert-error">Failed to load: ${err.message}</div>`;
+      return;
+    } finally {
+      document.getElementById('submissionsLoading').classList.add('hidden');
+    }
+  }
+
+  function renderSubmissionsHeader() {
+    const headerRow = document.getElementById('submissionsHeader');
+    const filterRow = document.getElementById('submissionsFilters');
+    headerRow.className = 'sort-row';
+    filterRow.className = 'filter-row';
+
+    headerRow.innerHTML = SUB_COLUMNS.map(col => {
+      const active = subState.sortBy === col.key;
+      const arrow = active ? (subState.sortDir === 'asc' ? '▲' : '▼') : '⇅';
+      return `<th class="sort-header${active ? ' active' : ''}" data-col="${col.key}">
+        ${col.label}<span class="sort-arrow">${arrow}</span>
+      </th>`;
+    }).join('');
+
+    headerRow.querySelectorAll('th.sort-header').forEach(th => {
+      th.onclick = () => {
+        const k = th.getAttribute('data-col');
+        if (subState.sortBy === k) {
+          subState.sortDir = subState.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          subState.sortBy = k;
+          subState.sortDir = 'asc';
+        }
+        renderSubmissionsHeader();
+        renderSubmissionsBody();
+      };
+    });
+
+    filterRow.innerHTML = SUB_COLUMNS.map(col => {
+      if (col.filter === 'text') {
+        return `<th><input type="text" data-fk="${col.key}" placeholder="filter…" value="${escapeAttr(subState.filters[col.key] || '')}" /></th>`;
+      }
+      if (col.filter === 'select') {
+        const opts = (col.options || []).map(([v, l]) =>
+          `<option value="${v}" ${subState.filters[col.key] === v ? 'selected' : ''}>${l}</option>`).join('');
+        return `<th><select data-fk="${col.key}">${opts}</select></th>`;
+      }
+      if (col.filter === 'choice') {
+        const tk = `choice${col.choiceIdx + 1}Text`;
+        const ck = `choice${col.choiceIdx + 1}Color`;
+        const colorOpts = COLOR_OPTIONS.map(([v, l]) =>
+          `<option value="${v}" ${subState.filters[ck] === v ? 'selected' : ''}>${l}</option>`).join('');
+        return `<th>
+          <input type="text" data-fk="${tk}" placeholder="filter name…" value="${escapeAttr(subState.filters[tk] || '')}" />
+          <select data-fk="${ck}" style="margin-top:.2rem;">${colorOpts}</select>
+        </th>`;
+      }
+      return '<th></th>';
+    }).join('');
+
+    filterRow.querySelectorAll('input[data-fk], select[data-fk]').forEach(el => {
+      el.addEventListener('input', () => {
+        subState.filters[el.getAttribute('data-fk')] = el.value;
+        renderSubmissionsBody();
+      });
+      el.addEventListener('change', () => {
+        subState.filters[el.getAttribute('data-fk')] = el.value;
+        renderSubmissionsBody();
+      });
+    });
+  }
+
+  function passesFilters(row) {
+    const f = subState.filters;
+    const txtMatch = (val, q) => !q || (val || '').toString().toLowerCase().includes(q.toLowerCase());
+
+    // Global search: match across name, location, displayName, all choice names
+    const search = (subState.search || '').trim().toLowerCase();
+    if (search) {
+      const haystack = [
+        row.lastName, row.firstName, row.displayName, row.location,
+        ...row.choices.map(c => c?.concertName || ''),
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+
+    if (!txtMatch(row.lastName, f.lastName))   return false;
+    if (!txtMatch(row.firstName, f.firstName)) return false;
+    if (!txtMatch(row.location, f.location))   return false;
+    if (f.submissionType && row.submissionType !== f.submissionType) return false;
+    if (f.canEditFreely === 'yes' && !row.canEditFreely) return false;
+    if (f.canEditFreely === 'no'  &&  row.canEditFreely) return false;
+
+    for (let i = 0; i < 5; i++) {
+      const c = row.choices[i] || {};
+      const txt = f[`choice${i+1}Text`];
+      const col = f[`choice${i+1}Color`];
+      if (txt && !txtMatch(c.concertName, txt)) return false;
+      if (col === 'attended'   && !c.attended) return false;
+      if (col === 'assigned'   && !c.assigned) return false;
+      if (col === 'unassigned' && (!c.concertId || c.assigned)) return false;
+      if (col === 'empty'      && c.concertId) return false;
+    }
+    return true;
+  }
+
+  function compareRows(a, b) {
+    const k = subState.sortBy;
+    const dir = subState.sortDir === 'asc' ? 1 : -1;
+    let av, bv;
+    if (k.startsWith('choice')) {
+      const idx = parseInt(k.replace('choice', ''), 10) - 1;
+      av = (a.choices[idx]?.concertName || '').toLowerCase();
+      bv = (b.choices[idx]?.concertName || '').toLowerCase();
+    } else if (k === 'canEditFreely') {
+      av = a.canEditFreely ? 1 : 0;
+      bv = b.canEditFreely ? 1 : 0;
+    } else {
+      av = (a[k] || '').toString().toLowerCase();
+      bv = (b[k] || '').toString().toLowerCase();
+    }
+    if (av < bv) return -1 * dir;
+    if (av > bv) return  1 * dir;
+    // Stable secondary sort by lastName/firstName
+    const sec = (a.lastName + a.firstName).toLowerCase().localeCompare((b.lastName + b.firstName).toLowerCase());
+    return sec;
+  }
+
+  function renderSubmissionsBody() {
+    const tbody = document.getElementById('submissionsBody');
+    const rows = subState.data.filter(passesFilters).sort(compareRows);
+    document.getElementById('submissionsCount').textContent =
+      `${rows.length} of ${subState.data.length}`;
+
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="${SUB_COLUMNS.length}" style="text-align:center;padding:1.5rem;color:var(--gray-400);">No rows match these filters.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = rows.map(row => {
+      const typeLabel = row.submissionType === 'external'
+        ? '<span class="badge badge-gray badge-tiny">External</span>'
+        : '<span class="badge badge-blue badge-tiny">Employee</span>';
+      const overrideCell = row.submissionType === 'external'
+        ? '<span class="text-muted text-xs">—</span>'
+        : `<span class="override-toggle ${row.canEditFreely ? 'on' : ''}"
+                 title="${row.canEditFreely ? 'Override is ON — click to turn off' : 'Click to grant full edit access'}"
+                 onclick="Admin.toggleOverride('${row.userId}', ${!row.canEditFreely})"></span>`;
+
+      const choiceCells = row.choices.map(c => {
+        if (!c.concertId) {
+          return `<td class="choice-cell"><span class="choice-empty">—</span></td>`;
+        }
+        const cls = ['choice-cell'];
+        if (c.attended) cls.push('attended');
+        else if (c.assigned) cls.push('assigned');
+        if (c.concertStatus === 'cancelled') cls.push('cancelled');
+        const slotInfo = c.assigned
+          ? `<span class="badge badge-tiny ${c.attended ? 'badge-green' : 'badge-amber'}" style="margin-left:.25rem;">${slotTypeLabel(c.slotType)} #${c.slotNumber}</span>` : '';
+        return `<td class="${cls.join(' ')}">
+          <span class="choice-name">${c.concertName}${slotInfo}</span>
+          <span class="choice-date">${formatDate(c.concertDate)}</span>
+        </td>`;
+      }).join('');
+
+      let locationCell;
+      if (row.submissionType === 'external') {
+        // External submitters: location is part of the submission, not editable
+        locationCell = row.location
+          ? `<td>${escapeAttr(row.location)}</td>`
+          : `<td><span class="text-muted">—</span></td>`;
+      } else {
+        const dealerships = subState.dealerships || DEALERSHIPS;
+        const optParts = ['<option value="">— Set —</option>'];
+        for (const d of dealerships) {
+          optParts.push(`<option value="${escapeAttr(d)}" ${row.location === d ? 'selected' : ''}>${d}</option>`);
+        }
+        // If location is set to something not in our dealership list (e.g., from Entra
+        // companyName with different wording), preserve it as a selected custom option
+        if (row.location && !dealerships.includes(row.location)) {
+          optParts.push(`<option value="${escapeAttr(row.location)}" selected>${escapeAttr(row.location)} (Entra)</option>`);
+        }
+        locationCell = `<td><select class="form-control" style="font-size:.78rem;padding:.15rem .3rem;"
+          onchange="Admin.setEmployeeLocation('${row.userId}', this.value)">${optParts.join('')}</select></td>`;
+      }
+
+      return `<tr data-userid="${row.userId}">
+        <td>${row.lastName || '<span class="text-muted">—</span>'}</td>
+        <td>${row.firstName || '<span class="text-muted">—</span>'}</td>
+        ${locationCell}
+        <td>${typeLabel}</td>
+        ${choiceCells}
+        <td style="text-align:center;">${overrideCell}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  async function setEmployeeLocation(userId, location) {
+    const row = subState.data.find(r => r.userId === userId);
+    if (!row) return;
+    const prev = row.location;
+    row.location = location;
+    // Don't re-render the whole body — the select already shows the new value, and re-rendering
+    // would steal focus / collapse the dropdown
+    try {
+      await Auth.apiRequest(`/employees/${userId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ location }),
+      });
+    } catch (err) {
+      row.location = prev;
+      renderSubmissionsBody();
+      alert('Failed to save location: ' + err.message);
+    }
+  }
+
+  async function toggleOverride(userId, newValue) {
+    const row = subState.data.find(r => r.userId === userId);
+    if (!row) return;
+    const prev = row.canEditFreely;
+    row.canEditFreely = newValue;
+    renderSubmissionsBody();
+    try {
+      await Auth.apiRequest(`/employees/${userId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ canEditFreely: newValue }),
+      });
+    } catch (err) {
+      row.canEditFreely = prev;
+      renderSubmissionsBody();
+      alert('Failed to update override: ' + err.message);
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────
@@ -904,6 +1333,65 @@ const Admin = (() => {
     return (str || '').replace(/'/g, '&apos;').replace(/"/g, '&quot;');
   }
 
+  async function cancelConcert(concertId, name) {
+    const msg = `Cancel "${name}"?\n\n` +
+      `• It will be hidden from the employee picker\n` +
+      `• Any existing ticket assignments for this concert will be deleted\n` +
+      `• Employees who had it in their top-5 will see a "CANCELLED — pick a replacement" notice\n\n` +
+      `Continue?`;
+    if (!confirm(msg)) return;
+    try {
+      const result = await Auth.apiRequest(`/concerts/${concertId}/cancel`, {
+        method: 'POST', body: JSON.stringify({}),
+      });
+      alert(`✓ ${result.message}`);
+      loadConcerts();
+    } catch (err) {
+      alert('Cancel failed: ' + err.message);
+    }
+  }
+
+  async function toggleAttended(assignmentId, newValue) {
+    if (!currentDetail) return;
+    let target = null;
+    for (const [key, slots] of Object.entries(currentDetail.slotGrids || {})) {
+      const idx = slots.findIndex(s => s.assignmentId === assignmentId);
+      if (idx !== -1) { target = { key, idx }; break; }
+    }
+    if (!target) return;
+    const slot = currentDetail.slotGrids[target.key][target.idx];
+    const previous = !!slot.attended;
+    slot.attended = !!newValue;
+    renderAllSlotGrids(currentDetail.slotGrids, currentDetail.concert, currentEmployeeMap);
+    try {
+      await Auth.apiRequest(`/assignments/${assignmentId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ attended: !!newValue }),
+      });
+    } catch (err) {
+      slot.attended = previous;
+      renderAllSlotGrids(currentDetail.slotGrids, currentDetail.concert, currentEmployeeMap);
+      alert('Failed to update attendance: ' + err.message);
+    }
+  }
+
+  async function uncancelConcert(concertId, name) {
+    const msg = `Restore "${name}"?\n\n` +
+      `It will reappear in the employee picker. Anyone who had it ranked still has it ranked.\n\n` +
+      `Heads up: assignments removed when you cancelled are NOT restored — you'll need to re-assign tickets.\n\n` +
+      `Continue?`;
+    if (!confirm(msg)) return;
+    try {
+      const result = await Auth.apiRequest(`/concerts/${concertId}/uncancel`, {
+        method: 'POST', body: JSON.stringify({}),
+      });
+      alert(`✓ ${result.message}`);
+      loadConcerts();
+    } catch (err) {
+      alert('Uncancel failed: ' + err.message);
+    }
+  }
+
   async function quickAssign(userId, name, email, slotType) {
     const slots = currentDetail?.slotGrids?.[slotType] || [];
     const openSlot = slots.find(s => !s.assignmentId);
@@ -934,12 +1422,14 @@ const Admin = (() => {
     init, showTab,
     showList, openConcertDetail,
     toggleSlotEdit, saveSlotConfig,
-    openAssignModal, closeAssignModal, onAssignTypeChange, saveAssignment, removeAssignment, quickAssign,
-    exportSectionEmails, exportAllEmails,
+    openAssignModal, closeAssignModal, onAssignTypeChange, saveAssignment, removeAssignment, quickAssign, toggleAttended,
+    exportSectionEmails, exportAllEmails, printCheckinSheet,
     addHotelRoomInput, reindexHotelRooms,
-    seedConcerts, showAddConcert, editConcertDetails,
+    seedConcerts, showAddConcert, editConcertDetails, cancelConcert, uncancelConcert,
     loadGuests, showGuestModal, closeGuestModal, saveGuest, deleteGuest,
     showGuestAssignModal, closeGuestAssignModal, onGuestAssignConcertChange, onGuestAssignSlotTypeChange, saveGuestAssignment,
-    loadSettings, setSubmissions, saveSeason, saveFromEmail,
+    loadSettings, setSubmissionMode, saveSeason, saveFromEmail,
+    loadSubmissions, toggleOverride, setEmployeeLocation,
+    onSubmissionsSearch, clearSubmissionsFilters,
   };
 })();

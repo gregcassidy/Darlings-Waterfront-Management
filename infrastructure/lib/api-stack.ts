@@ -85,8 +85,8 @@ export class ApiStack extends cdk.Stack {
     };
 
     // Lambda functions
-    const concertsFn = createFn('Concerts', 'concerts', [tables.concerts, tables.settings, tables.preferences]);
-    const preferencesFn = createFn('Preferences', 'preferences', [tables.preferences, tables.employees, tables.settings, tables.concerts]);
+    const concertsFn = createFn('Concerts', 'concerts', [tables.concerts, tables.settings, tables.preferences, tables.assignments]);
+    const preferencesFn = createFn('Preferences', 'preferences', [tables.preferences, tables.employees, tables.settings, tables.concerts, tables.assignments]);
     const assignmentsFn = createFn('Assignments', 'assignments', [tables.assignments, tables.concerts, tables.employees, tables.preferences]);
     const notificationsFn = createFn('Notifications', 'notifications', [tables.assignments, tables.employees, tables.concerts, tables.settings]);
     const settingsFn = createFn('Settings', 'settings', [tables.settings, tables.employees]);
@@ -102,6 +102,8 @@ export class ApiStack extends cdk.Stack {
     concert.addMethod('GET', new apigateway.LambdaIntegration(concertsFn), auth);
     concert.addMethod('PUT', new apigateway.LambdaIntegration(concertsFn), auth);
     concert.addMethod('DELETE', new apigateway.LambdaIntegration(concertsFn), auth);
+    concert.addResource('cancel').addMethod('POST', new apigateway.LambdaIntegration(concertsFn), auth);
+    concert.addResource('uncancel').addMethod('POST', new apigateway.LambdaIntegration(concertsFn), auth);
 
     // /public routes (no authorizer — for external one-time submitters)
     const publicRoot = this.api.root.addResource('public');
@@ -140,6 +142,11 @@ export class ApiStack extends cdk.Stack {
     const employeeMe = employees.addResource('me');
     employeeMe.addMethod('GET', new apigateway.LambdaIntegration(preferencesFn), auth);
     employeeMe.addMethod('PUT', new apigateway.LambdaIntegration(preferencesFn), auth);
+    employees.addResource('{userId}').addMethod('PUT', new apigateway.LambdaIntegration(preferencesFn), auth);
+
+    // /admin routes (admin-only views that span tables)
+    const adminRoot = this.api.root.addResource('admin');
+    adminRoot.addResource('all-submissions').addMethod('GET', new apigateway.LambdaIntegration(preferencesFn), auth);
 
     // /guests routes (admin only — Jay's external contacts)
     const guests = this.api.root.addResource('guests');

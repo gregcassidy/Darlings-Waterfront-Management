@@ -55,7 +55,7 @@ CloudFront → S3 (login.html, index.html, admin.html, css/, js/)
 | `WF-Employees` | userId | — | Auto-created on first preference submission |
 | `WF-Preferences` | userId | season | Top-5 submissions. `preferences` = [{rank, concertId}] |
 | `WF-Assignments` | assignmentId | — | Per-slot assignments (suite/club/bsbParking/suiteParking) |
-| `WF-Settings` | settingKey | — | `submissionsOpen`, `currentSeason`, `notificationFromEmail` |
+| `WF-Settings` | settingKey | — | `submissionsStatus` (`open`/`limited`/`closed`), `currentSeason`, `notificationFromEmail`. Legacy `submissionsOpen` still read as fallback |
 | `WF-JaysGuests` | guestId | — | Jay's private external contact list (admin-only) |
 
 Concert slot counts per show (admin-configurable): `suiteTicketCount`, `clubTicketCount`, `bsbParkingCount`, `suiteParkingCount`. Defaults: 20/10/20/8.
@@ -134,12 +134,16 @@ curl -X POST https://r7wuhspii5.execute-api.us-east-1.amazonaws.com/prod/concert
 
 ## Common Tasks
 
-### Open/close employee submissions
-Admin Settings panel, or CLI:
+### Set submission mode
+Admin Settings panel offers Open / Limited / Closed. CLI:
 ```bash
 aws dynamodb put-item --table-name WF-Settings \
-  --item '{"settingKey":{"S":"submissionsOpen"},"value":{"S":"true"}}' --region us-east-1
+  --item '{"settingKey":{"S":"submissionsStatus"},"value":{"S":"open"}}' --region us-east-1
 ```
+- `open` — anyone can edit their full top-5
+- `limited` — existing submitters can only swap one selection (1 add and/or 1 remove, no reorders); new employees (`createdAt < 21 days`) and `canEditFreely=true` users still get full edit
+- `closed` — locked except new employees and override users
+- Adding or cancelling a concert while `closed` auto-flips status to `limited`
 
 ### View Lambda logs
 ```bash

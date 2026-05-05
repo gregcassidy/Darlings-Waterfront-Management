@@ -18,7 +18,8 @@ function getUser(event) {
   return { userId: ctx.userId, name: ctx.name, email: ctx.email, role: ctx.role };
 }
 
-const ALLOWED_KEYS = ['submissionsOpen', 'currentSeason', 'notificationFromEmail'];
+const ALLOWED_KEYS = ['submissionsStatus', 'submissionsOpen', 'currentSeason', 'notificationFromEmail'];
+const SUBMISSION_STATUSES = ['open', 'limited', 'closed'];
 
 async function getSettings(event) {
   const result = await db.send(new ScanCommand({ TableName: SETTINGS_TABLE }));
@@ -26,8 +27,12 @@ async function getSettings(event) {
   for (const item of (result.Items || [])) {
     settings[item.settingKey] = item.value;
   }
-  // Defaults for first run
-  if (!settings.submissionsOpen) settings.submissionsOpen = 'false';
+  // Defaults + backward-compat
+  if (!settings.submissionsStatus) {
+    settings.submissionsStatus = settings.submissionsOpen === 'true' ? 'open' : 'closed';
+  }
+  // Keep legacy key in sync for any older clients still reading it
+  settings.submissionsOpen = settings.submissionsStatus === 'closed' ? 'false' : 'true';
   if (!settings.currentSeason) settings.currentSeason = '2026';
   if (!settings.notificationFromEmail) settings.notificationFromEmail = '';
   return res(200, settings);
@@ -44,7 +49,9 @@ async function updateSetting(key, event) {
   const body = JSON.parse(event.body || '{}');
   if (body.value === undefined) return res(400, { error: 'value is required' });
 
-  // Validate specific keys
+  if (key === 'submissionsStatus' && !SUBMISSION_STATUSES.includes(String(body.value))) {
+    return res(400, { error: `submissionsStatus must be one of: ${SUBMISSION_STATUSES.join(', ')}` });
+  }
   if (key === 'submissionsOpen' && !['true', 'false'].includes(String(body.value))) {
     return res(400, { error: 'submissionsOpen must be "true" or "false"' });
   }

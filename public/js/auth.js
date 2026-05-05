@@ -155,7 +155,7 @@ async function fetchGraphProfile() {
       scopes: ['https://graph.microsoft.com/User.Read'],
     });
     const resp = await fetch(
-      'https://graph.microsoft.com/v1.0/me?$select=displayName,givenName,surname,jobTitle,officeLocation,businessPhones,userPrincipalName',
+      'https://graph.microsoft.com/v1.0/me?$select=displayName,givenName,surname,jobTitle,officeLocation,companyName,businessPhones,userPrincipalName',
       { headers: { Authorization: `Bearer ${result.accessToken}` } }
     );
     if (!resp.ok) return null;

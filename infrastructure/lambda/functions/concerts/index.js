@@ -6,6 +6,37 @@ const db = DynamoDBDocumentClient.from(client);
 
 const CONCERTS_TABLE = process.env.CONCERTS_TABLE;
 const PREFERENCES_TABLE = process.env.PREFERENCES_TABLE;
+const ASSIGNMENTS_TABLE = process.env.ASSIGNMENTS_TABLE;
+const SETTINGS_TABLE = process.env.SETTINGS_TABLE;
+
+// If submissions are currently 'closed', flip them to 'limited' so existing employees can swap.
+// Called whenever the concert lineup changes (add or cancel).
+async function autoFlipToLimitedIfClosed(actorUserId) {
+  const newKey = await db.send(new GetCommand({
+    TableName: SETTINGS_TABLE, Key: { settingKey: 'submissionsStatus' },
+  }));
+  let current = newKey.Item?.value;
+  if (!current) {
+    // Backward-compat: derive from legacy submissionsOpen if submissionsStatus not set
+    const legacy = await db.send(new GetCommand({
+      TableName: SETTINGS_TABLE, Key: { settingKey: 'submissionsOpen' },
+    }));
+    current = legacy.Item?.value === 'true' ? 'open' : 'closed';
+  }
+  if (current === 'closed') {
+    await db.send(new PutCommand({
+      TableName: SETTINGS_TABLE,
+      Item: {
+        settingKey: 'submissionsStatus',
+        value: 'limited',
+        updatedAt: new Date().toISOString(),
+        updatedBy: actorUserId || 'system-auto-flip',
+      },
+    }));
+    return true;
+  }
+  return false;
+}
 
 const res = (statusCode, body) => ({
   statusCode,
@@ -119,7 +150,8 @@ async function createConcert(event) {
   };
 
   await db.send(new PutCommand({ TableName: CONCERTS_TABLE, Item: item }));
-  return res(201, item);
+  const flipped = await autoFlipToLimitedIfClosed(user.userId);
+  return res(201, { ...item, autoFlippedToLimited: flipped });
 }
 
 async function updateConcert(id, event) {
@@ -147,6 +179,70 @@ async function deleteConcert(id, event) {
 
   await db.send(new DeleteCommand({ TableName: CONCERTS_TABLE, Key: { concertId: id } }));
   return res(200, { message: 'Deleted' });
+}
+
+async function cancelConcert(id, event) {
+  const user = getUser(event);
+  if (user.role !== 'admin') return res(403, { error: 'Admin only' });
+
+  const existing = await db.send(new GetCommand({ TableName: CONCERTS_TABLE, Key: { concertId: id } }));
+  if (!existing.Item) return res(404, { error: 'Concert not found' });
+
+  // Delete all assignments for this concert. Preferences are intentionally kept so admin
+  // can still see who had this concert ranked when they go to identify replacements.
+  const assignmentsResult = await db.send(new QueryCommand({
+    TableName: ASSIGNMENTS_TABLE,
+    IndexName: 'concertId-index',
+    KeyConditionExpression: 'concertId = :c',
+    ExpressionAttributeValues: { ':c': id },
+  }));
+  const assignments = assignmentsResult.Items || [];
+  for (const a of assignments) {
+    await db.send(new DeleteCommand({
+      TableName: ASSIGNMENTS_TABLE,
+      Key: { assignmentId: a.assignmentId },
+    }));
+  }
+
+  const updated = {
+    ...existing.Item,
+    status: 'cancelled',
+    cancelledAt: new Date().toISOString(),
+    cancelledBy: user.userId || '',
+  };
+  await db.send(new PutCommand({ TableName: CONCERTS_TABLE, Item: updated }));
+  const flipped = await autoFlipToLimitedIfClosed(user.userId);
+
+  return res(200, {
+    message: `Concert cancelled. ${assignments.length} assignment(s) removed.${flipped ? ' Submissions auto-flipped to Limited mode.' : ''}`,
+    concert: updated,
+    deletedAssignments: assignments.length,
+    autoFlippedToLimited: flipped,
+  });
+}
+
+async function uncancelConcert(id, event) {
+  const user = getUser(event);
+  if (user.role !== 'admin') return res(403, { error: 'Admin only' });
+
+  const existing = await db.send(new GetCommand({ TableName: CONCERTS_TABLE, Key: { concertId: id } }));
+  if (!existing.Item) return res(404, { error: 'Concert not found' });
+  if (existing.Item.status !== 'cancelled') {
+    return res(400, { error: 'Concert is not cancelled' });
+  }
+
+  // Restore the concert. Note: assignments deleted at cancel time are NOT recovered —
+  // admin would need to re-assign manually. Preferences with this concertId are
+  // automatically re-valid since the concert is back in the active lineup.
+  const updated = { ...existing.Item, status: 'active', updatedAt: new Date().toISOString() };
+  delete updated.cancelledAt;
+  delete updated.cancelledBy;
+
+  await db.send(new PutCommand({ TableName: CONCERTS_TABLE, Item: updated }));
+  return res(200, {
+    message: 'Concert restored. Note: any assignments removed at cancel time were not recovered.',
+    concert: updated,
+  });
 }
 
 async function seedConcerts(event) {
@@ -211,9 +307,11 @@ exports.handler = async (event) => {
     if (resource === '/concerts' && method === 'POST')        return createConcert(event);
     if (resource === '/concerts/seed' && method === 'POST')   return seedConcerts(event);
     if (resource === '/concerts/sync' && method === 'POST')   return syncConcerts(event);
-    if (resource === '/concerts/{id}' && method === 'GET')    return getConcert(id, event);
-    if (resource === '/concerts/{id}' && method === 'PUT')    return updateConcert(id, event);
-    if (resource === '/concerts/{id}' && method === 'DELETE') return deleteConcert(id, event);
+    if (resource === '/concerts/{id}' && method === 'GET')        return getConcert(id, event);
+    if (resource === '/concerts/{id}' && method === 'PUT')        return updateConcert(id, event);
+    if (resource === '/concerts/{id}' && method === 'DELETE')     return deleteConcert(id, event);
+    if (resource === '/concerts/{id}/cancel' && method === 'POST')   return cancelConcert(id, event);
+    if (resource === '/concerts/{id}/uncancel' && method === 'POST') return uncancelConcert(id, event);
 
     return res(405, { error: 'Method not allowed' });
   } catch (err) {

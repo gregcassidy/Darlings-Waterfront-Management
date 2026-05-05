@@ -3,9 +3,21 @@
 const App = (() => {
   let concerts = [];
   let selections = [null, null, null, null, null]; // index 0 = rank 1
+  let originalSelections = [null, null, null, null, null]; // snapshot at load — used to detect swaps
   let existingPrefs = [];
-  let submissionsOpen = false;
+  let systemStatus = 'closed';   // open | limited | closed
+  let effectiveMode = 'closed';  // user-specific: open | limited | closed
   let employeeProfile = null;
+
+  const NEW_EMPLOYEE_GRACE_DAYS = 21;
+
+  function computeEffectiveMode(status, profile) {
+    if (profile?.canEditFreely) return 'open';
+    if (!profile?.createdAt) return 'open'; // first-time user
+    const ageMs = Date.now() - new Date(profile.createdAt).getTime();
+    if (ageMs < NEW_EMPLOYEE_GRACE_DAYS * 24 * 60 * 60 * 1000) return 'open';
+    return status;
+  }
 
   async function init() {
     const ok = await Auth.requireAuth();
@@ -41,9 +53,11 @@ const App = (() => {
         employeeProfile ? Promise.resolve(employeeProfile) : Auth.apiRequest('/employees/me').catch(() => null),
       ]);
 
-      submissionsOpen = settings?.submissionsOpen === 'true';
+      systemStatus = settings?.submissionsStatus
+        || (settings?.submissionsOpen === 'true' ? 'open' : 'closed');
       concerts = concertsData || [];
       employeeProfile = profile;
+      effectiveMode = computeEffectiveMode(systemStatus, profile);
 
       // Pre-fill personal email if on file
       const emailInput = document.getElementById('personalEmail');
@@ -59,9 +73,7 @@ const App = (() => {
         document.getElementById('adminLink').classList.remove('hidden');
       }
 
-      if (!submissionsOpen) {
-        document.getElementById('closedBanner').classList.remove('hidden');
-      }
+      renderModeBanner();
 
       // Restore existing selections
       if (myPrefs?.preferences?.length > 0) {
@@ -72,6 +84,7 @@ const App = (() => {
           }
         }
       }
+      originalSelections = [...selections];
 
       renderPrefSlots();
       renderConcertList();
@@ -82,6 +95,58 @@ const App = (() => {
 
   function onPersonalEmailChange() {
     renderPrefSlots(); // re-evaluate submit button state
+  }
+
+  function renderModeBanner() {
+    const banner = document.getElementById('closedBanner');
+    if (effectiveMode === 'open' && systemStatus !== 'open') {
+      // System is locked but this user is exempt (override or new-employee grace)
+      const reason = employeeProfile?.canEditFreely
+        ? 'an admin has granted you full edit access'
+        : 'you joined recently and still have new-employee edit access';
+      banner.classList.remove('alert-warning');
+      banner.classList.add('alert-info');
+      banner.innerHTML = `<strong>Submissions are ${systemStatus} for everyone else.</strong> You can edit freely because ${reason}.`;
+      banner.classList.remove('hidden');
+    } else if (effectiveMode === 'limited') {
+      banner.classList.remove('alert-warning');
+      banner.classList.add('alert-info');
+      banner.innerHTML = `<strong>Limited swap mode.</strong> You can change one selection — remove an item and pick a replacement, then submit.`;
+      banner.classList.remove('hidden');
+    } else if (effectiveMode === 'closed') {
+      banner.classList.add('alert-warning');
+      banner.classList.remove('alert-info');
+      banner.innerHTML = `<strong>Submissions are closed.</strong> The preference submission window is not currently open. You can view your previous selections below.`;
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
+    }
+  }
+
+  function diffSelections() {
+    // Returns { added, removed, reordered } based on current vs original
+    const oldSet = new Set(originalSelections.filter(Boolean));
+    const newSet = new Set(selections.filter(Boolean));
+    let added = 0, removed = 0;
+    for (const id of newSet) if (!oldSet.has(id)) added++;
+    for (const id of oldSet) if (!newSet.has(id)) removed++;
+    let reordered = false;
+    if (added === 0 && removed === 0) {
+      for (let i = 0; i < 5; i++) {
+        if (originalSelections[i] !== selections[i]) { reordered = true; break; }
+      }
+    }
+    return { added, removed, reordered };
+  }
+
+  function hasInternalGap() {
+    // True if there's a null between non-null entries (e.g., [A,null,C,...])
+    let seenEmpty = false;
+    for (let i = 0; i < 5; i++) {
+      if (selections[i] === null) seenEmpty = true;
+      else if (seenEmpty) return true;
+    }
+    return false;
   }
 
   function renderPrefSlots() {
@@ -95,31 +160,51 @@ const App = (() => {
     const hasEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal);
 
     const submitBtn = document.getElementById('submitBtn');
-    submitBtn.disabled = filled === 0 || !submissionsOpen || !hasEmail;
+    let submitDisabled = filled === 0 || !hasEmail || effectiveMode === 'closed';
+    if (effectiveMode === 'limited') {
+      const { added, removed, reordered } = diffSelections();
+      if (added > 1 || removed > 1 || reordered || hasInternalGap()) submitDisabled = true;
+    }
+    submitBtn.disabled = submitDisabled;
 
+    const editable = effectiveMode === 'open' || effectiveMode === 'limited';
     const lastFilled = filled - 1;
     container.innerHTML = '';
     for (let i = 0; i < 5; i++) {
       const concertId = selections[i];
       const concert = concertId ? concerts.find(c => c.concertId === concertId) : null;
+      const isCancelled = concert?.status === 'cancelled';
       const slot = document.createElement('div');
       slot.className = `pref-slot${concert ? ' filled' : ''}`;
-      const canMoveUp   = concert && submissionsOpen && i > 0;
-      const canMoveDown = concert && submissionsOpen && i < lastFilled;
+      // Reordering only allowed in open mode (limited mode is "swap one", no reorders)
+      const canMoveUp   = concert && effectiveMode === 'open' && !isCancelled && i > 0;
+      const canMoveDown = concert && effectiveMode === 'open' && !isCancelled && i < lastFilled;
+      const canRemove   = concert && editable;
+      const nameHtml = concert
+        ? (isCancelled
+            ? `<span style="text-decoration:line-through;color:var(--gray-500);">${concert.name}</span> <span class="badge badge-red" style="font-size:.65rem;">CANCELLED</span>`
+            : concert.name)
+        : '';
+      const subHtml = concert
+        ? (isCancelled
+            ? `<span style="color:var(--red);font-weight:500;">Pick a replacement below</span>`
+            : `${formatDate(concert.date)} &bull; ${concert.doorsTime}`)
+        : '';
+      const emptyMsg = editable ? 'Click a concert to add' : 'Empty';
       slot.innerHTML = `
         <div class="pref-rank">${i + 1}</div>
         ${concert ? `
           <div style="flex:1;overflow:hidden;">
-            <div class="pref-concert-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${concert.name}</div>
-            <div class="pref-concert-date">${formatDate(concert.date)} &bull; ${concert.doorsTime}</div>
+            <div class="pref-concert-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nameHtml}</div>
+            <div class="pref-concert-date">${subHtml}</div>
           </div>
           <div class="flex gap-1" style="flex-shrink:0;">
             <button class="btn btn-sm btn-outline" title="Move up"   onclick="App.movePick(${i},-1)" ${canMoveUp   ? '' : 'disabled'}>▲</button>
             <button class="btn btn-sm btn-outline" title="Move down" onclick="App.movePick(${i}, 1)" ${canMoveDown ? '' : 'disabled'}>▼</button>
-            <button class="btn btn-sm btn-outline" title="Remove"    onclick="App.removePick(${i})" ${!submissionsOpen ? 'disabled' : ''}>✕</button>
+            <button class="btn btn-sm btn-outline" title="Remove"    onclick="App.removePick(${i})" ${canRemove   ? '' : 'disabled'}>✕</button>
           </div>
         ` : `
-          <span class="pref-slot-empty">Click a concert to add</span>
+          <span class="pref-slot-empty">${emptyMsg}</span>
         `}
       `;
       container.appendChild(slot);
@@ -145,20 +230,27 @@ const App = (() => {
     loading.classList.add('hidden');
     container.innerHTML = '';
 
-    if (!concerts.length) {
+    const visibleConcerts = concerts.filter(c => c.status !== 'cancelled');
+    if (!visibleConcerts.length) {
       container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🎵</div><h3>No concerts loaded</h3><p>Check back soon.</p></div>';
       return;
     }
 
-    for (const concert of concerts) {
+    const hasGap = selections.includes(null);
+    const canPickMore = effectiveMode === 'open'
+      || (effectiveMode === 'limited' && hasGap);
+
+    for (const concert of visibleConcerts) {
       const rank = selections.indexOf(concert.concertId);
       const isSelected = rank !== -1;
       const dateParts = parseDateParts(concert.date);
+      const cardDisabled = !isSelected && !canPickMore;
 
       const card = document.createElement('div');
-      card.className = `concert-card${isSelected ? ' selected' : ''}`;
+      card.className = `concert-card${isSelected ? ' selected' : ''}${cardDisabled ? ' disabled' : ''}`;
+      if (cardDisabled) card.style.opacity = '0.45';
       card.setAttribute('data-id', concert.concertId);
-      card.onclick = () => toggleConcert(concert.concertId);
+      card.onclick = cardDisabled ? null : () => toggleConcert(concert.concertId);
 
       card.innerHTML = `
         <div class="concert-date-badge">
@@ -179,12 +271,18 @@ const App = (() => {
   }
 
   function toggleConcert(concertId) {
-    if (!submissionsOpen) return;
+    if (effectiveMode === 'closed') return;
 
     const existingRank = selections.indexOf(concertId);
     if (existingRank !== -1) {
       // Already selected — remove it
       selections[existingRank] = null;
+      if (effectiveMode === 'open') {
+        // Compact in open mode so empty slot moves to the end
+        const compact = selections.filter(Boolean);
+        for (let i = 0; i < 5; i++) selections[i] = compact[i] || null;
+      }
+      // In limited mode we leave the gap so the user can fill it with a replacement
     } else {
       // Add to first empty slot
       const emptySlot = selections.indexOf(null);
@@ -198,11 +296,12 @@ const App = (() => {
 
   function removePick(index) {
     selections[index] = null;
-    // Compact: shift remaining selections up to fill the gap
-    const compact = selections.filter(Boolean);
-    for (let i = 0; i < 5; i++) {
-      selections[i] = compact[i] || null;
+    if (effectiveMode === 'open') {
+      // Compact: shift remaining selections up to fill the gap
+      const compact = selections.filter(Boolean);
+      for (let i = 0; i < 5; i++) selections[i] = compact[i] || null;
     }
+    // In limited mode the gap stays — user must replace the removed item to submit
     renderPrefSlots();
     renderConcertList();
   }

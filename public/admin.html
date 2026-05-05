@@ -51,6 +51,7 @@
 
   <div class="tabs">
     <button class="tab-btn active" id="tab-concerts-btn" onclick="Admin.showTab('concerts', this)">Concerts</button>
+    <button class="tab-btn" id="tab-submissions-btn" onclick="Admin.showTab('submissions', this)">All Submissions</button>
     <button class="tab-btn" id="tab-guests-btn" onclick="Admin.showTab('guests', this)">Jay's Guests</button>
     <button class="tab-btn" id="tab-settings-btn" onclick="Admin.showTab('settings', this)">Settings</button>
   </div>
@@ -178,6 +179,40 @@
     </div>
   </div>
 
+  <!-- ═══ ALL SUBMISSIONS TAB ═══ -->
+  <div id="tab-submissions" class="hidden">
+    <div class="section-header" style="flex-wrap:wrap;gap:1rem;align-items:flex-end;">
+      <div>
+        <h2 style="margin-bottom:.25rem;">All Submissions</h2>
+        <p class="text-sm text-muted" style="margin:0;">Click any column header to sort. Use the filter row to narrow down. <span style="background:#fef3c7;padding:.05rem .35rem;border-radius:3px;">Yellow</span> = assigned tickets, <span style="background:#bbf7d0;padding:.05rem .35rem;border-radius:3px;">Green</span> = attended.</p>
+      </div>
+      <div class="flex gap-2 items-center">
+        <span id="submissionsCount" class="badge badge-gray">—</span>
+        <button class="btn btn-outline btn-sm" onclick="Admin.loadSubmissions()">Refresh</button>
+      </div>
+    </div>
+
+    <div id="submissionsLoading" class="loading"><div class="loading-spinner"></div></div>
+
+    <div id="submissionsToolbar" class="hidden" style="display:flex;gap:.5rem;align-items:center;margin-bottom:.5rem;flex-wrap:wrap;">
+      <input type="text" id="submissionsSearch" class="form-control" placeholder="Search anywhere — name, location, concert…"
+             oninput="Admin.onSubmissionsSearch(this.value)" style="flex:1;min-width:240px;max-width:480px;" />
+      <button class="btn btn-outline btn-sm" onclick="Admin.clearSubmissionsFilters()">Clear filters</button>
+    </div>
+
+    <div id="submissionsWrap" class="card hidden" style="padding:0;overflow:hidden;">
+      <div style="overflow-x:auto;">
+        <table id="submissionsTable" class="submissions-table">
+          <thead>
+            <tr id="submissionsHeader"></tr>
+            <tr id="submissionsFilters"></tr>
+          </thead>
+          <tbody id="submissionsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- ═══ SETTINGS TAB ═══ -->
   <div id="tab-settings" class="hidden">
     <div class="section-header"><h2>Settings</h2></div>
@@ -185,12 +220,19 @@
       <div id="settingsLoading" class="loading"><div class="loading-spinner"></div></div>
       <div id="settingsForm" class="hidden">
         <div class="form-group">
-          <label class="form-label">Employee Submissions</label>
-          <div class="flex gap-2 items-center" style="margin-top:.25rem;">
-            <button class="btn btn-success btn-sm" id="openSubsBtn" onclick="Admin.setSubmissions(true)">Open Submissions</button>
-            <button class="btn btn-danger btn-sm" id="closeSubsBtn" onclick="Admin.setSubmissions(false)">Close Submissions</button>
+          <label class="form-label">Submission Mode</label>
+          <div class="flex gap-2 items-center" style="margin-top:.25rem;flex-wrap:wrap;">
+            <button class="btn btn-sm" id="modeOpenBtn" onclick="Admin.setSubmissionMode('open')">Open</button>
+            <button class="btn btn-sm" id="modeLimitedBtn" onclick="Admin.setSubmissionMode('limited')">Limited (1 swap)</button>
+            <button class="btn btn-sm" id="modeClosedBtn" onclick="Admin.setSubmissionMode('closed')">Closed</button>
             <span id="subsStatus" class="badge">—</span>
           </div>
+          <p class="text-xs text-muted" style="margin-top:.5rem;line-height:1.4;">
+            <strong>Open:</strong> anyone can edit their full top-5.<br>
+            <strong>Limited:</strong> existing submitters can only swap one selection at a time. New employees (under 21 days) and admin-overridden users still get full edit.<br>
+            <strong>Closed:</strong> no edits allowed except new employees and admin-overridden users.<br>
+            <em>Adding or cancelling a concert while Closed will auto-flip to Limited so people can react.</em>
+          </p>
         </div>
         <div class="form-group mt-4">
           <label class="form-label">Current Season</label>

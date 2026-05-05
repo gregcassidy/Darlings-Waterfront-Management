@@ -113,8 +113,9 @@
           </div>
         </div>
         <div class="field">
-          <label>Email</label>
+          <label>Ticketmaster Email</label>
           <input type="email" id="email" required maxlength="120" placeholder="you@example.com" />
+          <p style="font-size: .8rem; color: #6b7280; margin-top: .25rem;">This email must be linked to your Ticketmaster account for you to receive tickets.</p>
         </div>
       </div>
 
@@ -162,7 +163,9 @@
       const r = await fetch(`${apiUrl}/concerts`);
       if (!r.ok) throw new Error(`Failed to load concerts (HTTP ${r.status})`);
       const data = await r.json();
-      concerts = (data || []).slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      concerts = (data || [])
+        .filter(c => c.status !== 'cancelled')
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     }
 
     function populateDealerships() {
