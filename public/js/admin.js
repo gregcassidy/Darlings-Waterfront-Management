@@ -645,6 +645,13 @@ const Admin = (() => {
   // Parking + Hotel are single-slot only.
   const PAIRABLE_SLOT_TYPES = new Set(['suite', 'club']);
 
+  // Parking sections pull their candidate list from the corresponding ticket
+  // section, since parking is normally given to ticket holders.
+  const PARKING_SOURCE_SECTIONS = {
+    bsbParking:   { source: 'club',  label: 'Club',  noun: 'Club ticket holder' },
+    suiteParking: { source: 'suite', label: 'Suite', noun: 'Suite ticket holder' },
+  };
+
   function findOpenSlotNumbers(sectionKey) {
     const slots = currentDetail?.slotGrids?.[sectionKey] || [];
     return slots.filter(s => !s.assignmentId).map(s => s.slotNumber);
@@ -661,7 +668,7 @@ const Admin = (() => {
     document.getElementById('manualPhone').value = '';
     document.getElementById('assignTicketCount').value = '2';
 
-    // Load employees + guests up front — both BSB and standard paths need them
+    // Load employees + guests up front — both parking and standard paths need them
     let employeeMap = {};
     try {
       const employees = await Auth.apiRequest('/employees') || [];
@@ -675,29 +682,32 @@ const Admin = (() => {
     const empLabel = document.querySelector('#assignEmployee .form-label');
     const empTypeOpt = document.getElementById('assignTypeEmployeeOpt');
 
-    if (slotType === 'bsbParking') {
-      // Source from current club assignments, sorted by location
-      empTypeOpt.textContent = 'Club ticket holder';
-      if (empLabel) empLabel.textContent = 'Select Club ticket holder';
-      const clubSlots = (currentDetail?.slotGrids?.club || []).filter(s => s.assignmentId);
-      const bsbAssignedUserIds = new Set(
-        (currentDetail?.slotGrids?.bsbParking || [])
-          .filter(s => s.assignmentId && s.userId).map(s => s.userId)
+    const parkingCfg = PARKING_SOURCE_SECTIONS[slotType];
+    if (parkingCfg) {
+      // BSB Parking pulls from Club holders; Suite Parking pulls from Suite holders.
+      // Each ticket holder is one row (paired slots collapse via recipientKey),
+      // sorted by dealership location. Excludes anyone already assigned to this parking section.
+      empTypeOpt.textContent = parkingCfg.noun;
+      if (empLabel) empLabel.textContent = `Select ${parkingCfg.noun}`;
+      const ticketSlots = (currentDetail?.slotGrids?.[parkingCfg.source] || []).filter(s => s.assignmentId);
+      const parkingTaken = new Set(
+        (currentDetail?.slotGrids?.[slotType] || [])
+          .filter(s => s.assignmentId)
+          .map(recipientKey)
       );
-      const bsbAssignedGuestIds = new Set(
-        (currentDetail?.slotGrids?.bsbParking || [])
-          .filter(s => s.assignmentId && s.guestId).map(s => s.guestId)
-      );
-      const rows = clubSlots.map(s => {
+      const byRecipient = new Map();
+      for (const s of ticketSlots) {
+        const key = recipientKey(s);
+        if (parkingTaken.has(key)) continue;
+        const existing = byRecipient.get(key);
+        if (existing) { existing.ticketSlots.push(s.slotNumber); continue; }
         let source = 'manual', location = '', label = s.name || '';
         if (s.userId) {
-          if (bsbAssignedUserIds.has(s.userId)) return null;
           const p = employeeMap[s.userId] || {};
           source = 'employee';
           location = p.location || '';
           label = `${s.name}${p.jobTitle ? ' · ' + p.jobTitle : ''}${location ? ' · ' + location : ''}`;
         } else if (s.guestId) {
-          if (bsbAssignedGuestIds.has(s.guestId)) return null;
           const g = (allGuests || []).find(x => x.guestId === s.guestId) || {};
           source = 'guest';
           location = g.location || '';
@@ -705,25 +715,28 @@ const Admin = (() => {
         } else {
           label = `${s.name} · Manual`;
         }
-        return {
+        byRecipient.set(key, {
           source, location, label,
           userId: s.userId || '', guestId: s.guestId || '',
           name: s.name || '', email: s.email || '', phone: s.phone || '',
-          clubSlot: s.slotNumber,
-        };
-      }).filter(Boolean);
-      rows.sort((a, b) => {
+          ticketSlots: [s.slotNumber],
+        });
+      }
+      const rows = Array.from(byRecipient.values()).sort((a, b) => {
         const la = (a.location || '￿').toLowerCase();
         const lb = (b.location || '￿').toLowerCase();
         return la.localeCompare(lb) || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
       });
       empSelect.innerHTML = rows.length
-        ? rows.map((r, i) => `<option value="${i}"
+        ? rows.map((r, i) => {
+            const slotStr = r.ticketSlots.sort((a, b) => a - b).map(n => `#${n}`).join(', ');
+            return `<option value="${i}"
               data-source="${r.source}" data-user-id="${escapeAttr(r.userId)}"
               data-guest-id="${escapeAttr(r.guestId)}" data-name="${escapeAttr(r.name)}"
               data-email="${escapeAttr(r.email)}" data-phone="${escapeAttr(r.phone)}"
-            >Club #${r.clubSlot} — ${r.label}</option>`).join('')
-        : '<option value="">No Club ticket holders to choose from</option>';
+            >${parkingCfg.label} ${slotStr} — ${r.label}</option>`;
+          }).join('')
+        : `<option value="">No ${parkingCfg.noun}s to choose from</option>`;
     } else {
       // Standard flow — populate from this concert's preference requests
       empTypeOpt.textContent = 'Employee (from requests)';
