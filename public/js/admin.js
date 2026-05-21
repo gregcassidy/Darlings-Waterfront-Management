@@ -291,6 +291,32 @@ const Admin = (() => {
     downloadCsv(`${concertSlug(currentDetail.concert)}_${sectionKey}_emails.csv`, rows);
   }
 
+  // Export just the employees selected for a section — excludes Jay's Guests
+  // and manual/VIP entries. Pairs are de-duplicated to one row per employee.
+  function exportSectionEmployeeNames(sectionKey) {
+    if (!currentDetail) return;
+    const employeeSlots = (currentDetail.slotGrids?.[sectionKey] || [])
+      .filter(s => s.assignmentId && s.userId && !s.guestId);
+    if (!employeeSlots.length) {
+      alert(`No employees assigned in ${SECTION_LABELS[sectionKey] || sectionKey}.`);
+      return;
+    }
+    const seen = new Set();
+    const people = [];
+    for (const s of employeeSlots) {
+      if (seen.has(s.userId)) continue;
+      seen.add(s.userId);
+      people.push(resolveSlotNames(s));
+    }
+    people.sort((a, b) =>
+      (a.firstName || '').toLowerCase().localeCompare((b.firstName || '').toLowerCase())
+      || (a.lastName || '').toLowerCase().localeCompare((b.lastName || '').toLowerCase())
+    );
+    const rows = [['Name']];
+    for (const p of people) rows.push([`${p.firstName || ''} ${p.lastName || ''}`.trim()]);
+    downloadCsv(`${concertSlug(currentDetail.concert)}_${sectionKey}_employees.csv`, rows);
+  }
+
   function htmlEscape(s) {
     return (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   }
@@ -483,6 +509,7 @@ const Admin = (() => {
             <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;">
               <span class="badge ${filled === slots.length ? 'badge-green' : 'badge-gray'}">${filled}/${slots.length}</span>
               ${filled > 0 ? `<button class="btn btn-sm btn-secondary" style="padding:.2rem .5rem;font-size:.7rem;" onclick="Admin.exportSectionEmails('${key}')" title="Export emails for this section">⬇ CSV</button>` : ''}
+              ${filled > 0 ? `<button class="btn btn-sm btn-secondary" style="padding:.2rem .5rem;font-size:.7rem;" onclick="Admin.exportSectionEmployeeNames('${key}')" title="Export employee names only (excludes guests and manual entries)">⬇ Employees</button>` : ''}
               ${filled > 0 && key === 'club' ? `<button class="btn btn-sm btn-blue" style="padding:.2rem .5rem;font-size:.7rem;" onclick="Admin.printCheckinSheet('club')" title="Open a printable check-in sheet">🖨 Check-in Sheet</button>` : ''}
             </div>
           </div>
@@ -1647,7 +1674,7 @@ const Admin = (() => {
     showList, openConcertDetail,
     toggleSlotEdit, saveSlotConfig,
     openAssignModal, closeAssignModal, onAssignTypeChange, saveAssignment, removeAssignment, editManualAssignment, quickAssign, toggleAttended,
-    exportSectionEmails, exportAllEmails, printCheckinSheet,
+    exportSectionEmails, exportSectionEmployeeNames, exportAllEmails, printCheckinSheet,
     addHotelRoomInput, reindexHotelRooms,
     seedConcerts, showAddConcert, editConcertDetails, cancelConcert, uncancelConcert,
     scheduleNotesSave, saveNotesNow,
