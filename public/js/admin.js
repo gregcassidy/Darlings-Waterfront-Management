@@ -282,12 +282,35 @@ const Admin = (() => {
     return `${c.date || ''}_${base}`.replace(/^_/, '');
   }
 
+  // Dedupe key: an employee/guest collapses by their id; a manual entry
+  // collapses by normalized name+email. Pairs and multi-section assignments
+  // for the same person become one row.
+  function recipientKey(slot) {
+    if (slot.userId) return `u:${slot.userId}`;
+    if (slot.guestId) return `g:${slot.guestId}`;
+    const n = (slot.name || '').trim().toLowerCase();
+    const e = (slot.email || '').trim().toLowerCase();
+    return `m:${n}|${e}`;
+  }
+
   function exportSectionEmails(sectionKey) {
     if (!currentDetail) return;
     const slots = (currentDetail.slotGrids?.[sectionKey] || []).filter(s => s.assignmentId);
     if (!slots.length) { alert(`No assignments in ${SECTION_LABELS[sectionKey] || sectionKey}.`); return; }
-    const rows = [['Slot', 'Name', 'Email', 'Phone']];
-    for (const s of slots) rows.push([s.slotNumber, s.name || '', resolveEmail(s), s.phone || '']);
+    const byRecipient = new Map();
+    for (const s of slots) {
+      const key = recipientKey(s);
+      const entry = byRecipient.get(key) || {
+        name: s.name || '', email: resolveEmail(s), phone: s.phone || '', slots: [],
+      };
+      entry.slots.push(s.slotNumber);
+      byRecipient.set(key, entry);
+    }
+    const rows = [['Name', 'Email', 'Phone', 'Slots']];
+    for (const e of byRecipient.values()) {
+      const slotsStr = e.slots.sort((a, b) => a - b).map(n => `#${n}`).join(', ');
+      rows.push([e.name, e.email, e.phone, slotsStr]);
+    }
     downloadCsv(`${concertSlug(currentDetail.concert)}_${sectionKey}_emails.csv`, rows);
   }
 
@@ -422,16 +445,29 @@ const Admin = (() => {
 
   function exportAllEmails() {
     if (!currentDetail) return;
-    const rows = [['Section', 'Slot', 'Name', 'Email', 'Phone']];
-    let count = 0;
+    const byRecipient = new Map();
     for (const key of ['suite', 'club', 'bsbParking', 'suiteParking', 'hotel']) {
       const slots = (currentDetail.slotGrids?.[key] || []).filter(s => s.assignmentId);
       for (const s of slots) {
-        rows.push([SECTION_LABELS[key], s.slotNumber, s.name || '', resolveEmail(s), s.phone || '']);
-        count++;
+        const rk = recipientKey(s);
+        const entry = byRecipient.get(rk) || {
+          name: s.name || '', email: resolveEmail(s), phone: s.phone || '', bySection: {},
+        };
+        (entry.bySection[key] = entry.bySection[key] || []).push(s.slotNumber);
+        byRecipient.set(rk, entry);
       }
     }
-    if (!count) { alert('No assignments to export for this concert.'); return; }
+    if (!byRecipient.size) { alert('No assignments to export for this concert.'); return; }
+    const rows = [['Name', 'Email', 'Phone', 'Assignments']];
+    for (const e of byRecipient.values()) {
+      const parts = [];
+      for (const key of ['suite', 'club', 'bsbParking', 'suiteParking', 'hotel']) {
+        const nums = e.bySection[key];
+        if (!nums?.length) continue;
+        parts.push(`${SECTION_LABELS[key]} ${nums.sort((a, b) => a - b).map(n => `#${n}`).join(', ')}`);
+      }
+      rows.push([e.name, e.email, e.phone, parts.join('; ')]);
+    }
     downloadCsv(`${concertSlug(currentDetail.concert)}_all_emails.csv`, rows);
   }
 
@@ -1433,6 +1469,27 @@ const Admin = (() => {
     return sec;
   }
 
+  // Render the slot-assignment badges for one All-Submissions choice cell.
+  // Groups by slotType (so paired tickets read 'Club #12, #13') and falls back
+  // to the legacy single-slot fields if the backend hasn't been updated.
+  function renderChoiceSlotBadges(c) {
+    let list = Array.isArray(c.assignments) ? c.assignments : null;
+    if (!list || !list.length) {
+      if (!c.slotType) return '';
+      list = [{ slotType: c.slotType, slotNumber: c.slotNumber, attended: !!c.attended }];
+    }
+    const grouped = {};
+    for (const a of list) {
+      const g = grouped[a.slotType] = grouped[a.slotType] || { nums: [], attended: true };
+      g.nums.push(a.slotNumber);
+      if (!a.attended) g.attended = false;
+    }
+    return Object.entries(grouped).map(([slotType, g]) => {
+      const cls = g.attended ? 'badge-green' : 'badge-amber';
+      return `<span class="badge badge-tiny ${cls}" style="margin-left:.25rem;">${slotTypeLabel(slotType)} #${g.nums.join(', #')}</span>`;
+    }).join('');
+  }
+
   function renderSubmissionsBody() {
     const tbody = document.getElementById('submissionsBody');
     const rows = subState.data.filter(passesFilters).sort(compareRows);
@@ -1462,8 +1519,7 @@ const Admin = (() => {
         if (c.attended) cls.push('attended');
         else if (c.assigned) cls.push('assigned');
         if (c.concertStatus === 'cancelled') cls.push('cancelled');
-        const slotInfo = c.assigned
-          ? `<span class="badge badge-tiny ${c.attended ? 'badge-green' : 'badge-amber'}" style="margin-left:.25rem;">${slotTypeLabel(c.slotType)} #${c.slotNumber}</span>` : '';
+        const slotInfo = c.assigned ? renderChoiceSlotBadges(c) : '';
         return `<td class="${cls.join(' ')}">
           <span class="choice-name">${c.concertName}${slotInfo}</span>
           <span class="choice-date">${formatDate(c.concertDate)}</span>

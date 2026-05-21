@@ -399,11 +399,13 @@ async function getAllSubmissions(event) {
   const concertMap = {};
   for (const c of (concertsResult.Items || [])) concertMap[c.concertId] = c;
 
-  // Compose key on userId|concertId so the spreadsheet can mark assigned/attended cells
+  // Compose key on userId|concertId. An employee may have multiple assignments
+  // for one concert (paired tickets, or ticket+parking), so collect them all.
   const assignmentMap = {};
   for (const a of (assignmentsResult.Items || [])) {
     if (a.userId && concertMap[a.concertId]) {
-      assignmentMap[`${a.userId}|${a.concertId}`] = a;
+      const key = `${a.userId}|${a.concertId}`;
+      (assignmentMap[key] = assignmentMap[key] || []).push(a);
     }
   }
 
@@ -413,17 +415,27 @@ async function getAllSubmissions(event) {
       const cp = (preferences || []).find(p => p.rank === rank);
       if (!cp) { out.push({ rank, concertId: null }); continue; }
       const concert = concertMap[cp.concertId];
-      const assignment = assignmentMap[`${userId}|${cp.concertId}`];
+      const all = (assignmentMap[`${userId}|${cp.concertId}`] || []).slice()
+        .sort((a, b) =>
+          (a.slotType || '').localeCompare(b.slotType || '')
+          || ((a.slotNumber || 0) - (b.slotNumber || 0)));
       out.push({
         rank,
         concertId: cp.concertId,
         concertName: concert?.name || '(unknown)',
         concertDate: concert?.date || '',
         concertStatus: concert?.status || 'active',
-        assigned: !!assignment,
-        attended: !!assignment?.attended,
-        slotType: assignment?.slotType || null,
-        slotNumber: assignment?.slotNumber || null,
+        assigned: all.length > 0,
+        attended: all.length > 0 && all.every(x => x.attended),
+        // Backward-compat: first assignment surfaced as slotType/slotNumber
+        slotType: all[0]?.slotType || null,
+        slotNumber: all[0]?.slotNumber || null,
+        // Full list, used by the spreadsheet to render multi-slot badges
+        assignments: all.map(x => ({
+          slotType: x.slotType,
+          slotNumber: x.slotNumber,
+          attended: !!x.attended,
+        })),
       });
     }
     return out;
