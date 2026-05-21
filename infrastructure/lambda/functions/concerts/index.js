@@ -11,6 +11,15 @@ const SETTINGS_TABLE = process.env.SETTINGS_TABLE;
 
 // If submissions are currently 'closed', flip them to 'limited' so existing employees can swap.
 // Called whenever the concert lineup changes (add or cancel).
+// Derive an English day-of-week label from an ISO date (YYYY-MM-DD). Treats the date
+// as a calendar date in UTC so the result is timezone-independent.
+function dayOfWeekFromDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T12:00:00Z');
+  if (isNaN(d.getTime())) return '';
+  return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getUTCDay()];
+}
+
 async function autoFlipToLimitedIfClosed(actorUserId) {
   const newKey = await db.send(new GetCommand({
     TableName: SETTINGS_TABLE, Key: { settingKey: 'submissionsStatus' },
@@ -86,7 +95,9 @@ async function listConcerts(event) {
     KeyConditionExpression: 'season = :s',
     ExpressionAttributeValues: { ':s': season },
   }));
-  const concerts = (result.Items || []).sort((a, b) => a.date.localeCompare(b.date));
+  const concerts = (result.Items || [])
+    .map(c => (!c.day && c.date) ? { ...c, day: dayOfWeekFromDate(c.date) } : c)
+    .sort((a, b) => a.date.localeCompare(b.date));
   return res(200, concerts);
 }
 
@@ -94,13 +105,17 @@ async function getConcert(id, event) {
   const result = await db.send(new GetCommand({ TableName: CONCERTS_TABLE, Key: { concertId: id } }));
   if (!result.Item) return res(404, { error: 'Concert not found' });
 
+  const concert = (!result.Item.day && result.Item.date)
+    ? { ...result.Item, day: dayOfWeekFromDate(result.Item.date) }
+    : result.Item;
+
   // If admin, also return request tallies
   const user = getUser(event);
   if (user.role === 'admin') {
-    const tallies = await getRequestTallies(id, result.Item.season);
-    return res(200, { ...result.Item, requestTallies: tallies });
+    const tallies = await getRequestTallies(id, concert.season);
+    return res(200, { ...concert, requestTallies: tallies });
   }
-  return res(200, result.Item);
+  return res(200, concert);
 }
 
 async function getRequestTallies(concertId, season) {
@@ -134,7 +149,7 @@ async function createConcert(event) {
     season: body.season || '2026',
     showNumber: body.showNumber || 0,
     name: body.name,
-    day: body.day || '',
+    day: body.day || dayOfWeekFromDate(body.date),
     date: body.date,
     doorsTime: body.doorsTime || '',
     musicTime: body.musicTime || '',
@@ -162,6 +177,10 @@ async function updateConcert(id, event) {
   if (!existing.Item) return res(404, { error: 'Concert not found' });
 
   const body = JSON.parse(event.body || '{}');
+  // Re-derive day whenever date changes (unless caller explicitly provided a day)
+  if (body.date && body.day === undefined) {
+    body.day = dayOfWeekFromDate(body.date);
+  }
   const updated = {
     ...existing.Item,
     ...body,

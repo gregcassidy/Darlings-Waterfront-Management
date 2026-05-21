@@ -102,6 +102,16 @@
 
       <div class="card mb-4" id="detailHeader"></div>
 
+      <div class="card mb-4" id="notesCard">
+        <div class="card-header">
+          <h3>Notes</h3>
+          <span class="text-xs text-muted" id="notesStatus"></span>
+        </div>
+        <textarea id="concertNotes" class="form-control" rows="3"
+          maxlength="5000" placeholder="Any admin-only notes for this concert — catering reminders, special requests, etc."
+          oninput="Admin.scheduleNotesSave()" onblur="Admin.saveNotesNow()"></textarea>
+      </div>
+
       <div class="grid-2" style="gap:1.5rem;align-items:start;">
         <div>
           <!-- Slot config -->
@@ -266,9 +276,16 @@
       <div class="form-group">
         <label class="form-label">Assign Type</label>
         <select class="form-control" id="assignType" onchange="Admin.onAssignTypeChange()">
-          <option value="employee">Employee (from requests)</option>
+          <option value="employee" id="assignTypeEmployeeOpt">Employee (from requests)</option>
           <option value="guest">Jay's Guest</option>
           <option value="manual">Manual / VIP</option>
+        </select>
+      </div>
+      <div class="form-group hidden" id="assignTicketCountGroup">
+        <label class="form-label">Number of tickets</label>
+        <select class="form-control" id="assignTicketCount">
+          <option value="2">2 (pair)</option>
+          <option value="1">1 (solo)</option>
         </select>
       </div>
       <div id="assignEmployee" class="form-group">

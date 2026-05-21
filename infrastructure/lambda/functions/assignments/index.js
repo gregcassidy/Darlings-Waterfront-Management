@@ -144,14 +144,14 @@ async function createAssignment(event) {
   }
 
   const assignmentId = crypto.randomUUID();
+  // Omit userId/guestId entirely when not set — DynamoDB GSIs reject NULL on a key field
+  // (userId-index expects type S), and the index simply skips items missing the key.
   const item = {
     assignmentId,
     concertId,
     slotType,
     slotNumber,
     assigneeType: assigneeType || 'manual',
-    userId: assigneeUserId || null,
-    guestId: guestId || null,
     name,
     email: email || '',
     phone: phone || '',
@@ -160,6 +160,8 @@ async function createAssignment(event) {
     createdAt: new Date().toISOString(),
     createdBy: user.userId,
   };
+  if (assigneeUserId) item.userId = assigneeUserId;
+  if (guestId) item.guestId = guestId;
 
   await db.send(new PutCommand({ TableName: ASSIGNMENTS_TABLE, Item: item }));
   return res(201, item);
@@ -219,12 +221,14 @@ exports.handler = async (event) => {
     const resource = event.resource;
     const id = event.pathParameters?.id;
 
-    if (resource === '/assignments/me' && method === 'GET')                  return getMyAssignments(event);
-    if (resource === '/assignments/concert/{id}' && method === 'GET')        return getConcertAssignmentsHandler(id, event);
-    if (resource === '/assignments' && method === 'GET')                     return getAllAssignments(event);
-    if (resource === '/assignments' && method === 'POST')                    return createAssignment(event);
-    if (resource === '/assignments/{id}' && method === 'PUT')                return updateAssignment(id, event);
-    if (resource === '/assignments/{id}' && method === 'DELETE')             return deleteAssignment(id, event);
+    // Await so any rejection is caught here and returned as a CORS-enabled 500
+    // (otherwise API Gateway emits a default error response without CORS headers)
+    if (resource === '/assignments/me' && method === 'GET')                  return await getMyAssignments(event);
+    if (resource === '/assignments/concert/{id}' && method === 'GET')        return await getConcertAssignmentsHandler(id, event);
+    if (resource === '/assignments' && method === 'GET')                     return await getAllAssignments(event);
+    if (resource === '/assignments' && method === 'POST')                    return await createAssignment(event);
+    if (resource === '/assignments/{id}' && method === 'PUT')                return await updateAssignment(id, event);
+    if (resource === '/assignments/{id}' && method === 'DELETE')             return await deleteAssignment(id, event);
 
     return res(405, { error: 'Method not allowed' });
   } catch (err) {

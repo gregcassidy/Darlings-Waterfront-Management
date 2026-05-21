@@ -10,6 +10,8 @@ const Admin = (() => {
   let assigningGuest = null;       // guest being assigned via guestAssignModal
   let guestAssignDetail = null;    // concert detail currently loaded in modal
   let currentEmployeeMap = {};     // userId → employee profile, populated when concert detail loads
+  let notesSaveTimer = null;
+  let lastSavedNotes = '';
 
   // ── Init ──────────────────────────────────────────────────
 
@@ -90,9 +92,9 @@ const Admin = (() => {
         ? ' <span class="badge badge-red" style="font-size:.7rem;">CANCELLED</span>' : '';
       const cancelBtn = isCancelled
         ? `<button class="btn btn-amber btn-sm" style="margin-left:.25rem;"
-             onclick="event.stopPropagation();Admin.uncancelConcert('${c.concertId}','${escapeAttr(c.name)}')">Uncancel</button>`
+             onclick="event.stopPropagation();Admin.uncancelConcert('${c.concertId}')">Uncancel</button>`
         : `<button class="btn btn-danger btn-sm" style="margin-left:.25rem;"
-             onclick="event.stopPropagation();Admin.cancelConcert('${c.concertId}','${escapeAttr(c.name)}')">Cancel</button>`;
+             onclick="event.stopPropagation();Admin.cancelConcert('${c.concertId}')">Cancel</button>`;
       tr.innerHTML = `
         <td>${c.showNumber}</td>
         <td>${c.name}${cancelledBadge}</td>
@@ -156,6 +158,14 @@ const Admin = (() => {
             ${c.hotelNotes ? `<div class="text-xs text-muted mt-1">${c.hotelNotes}</div>` : ''}
           </div>` : ''}
       </div>`;
+
+    // Notes — populate textarea, reset save state
+    const notesEl = document.getElementById('concertNotes');
+    if (notesEl) {
+      notesEl.value = c.notes || '';
+      lastSavedNotes = notesEl.value;
+      setNotesStatus('');
+    }
 
     // Slot config view
     renderSlotConfigView(c);
@@ -285,12 +295,39 @@ const Admin = (() => {
     return (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   }
 
+  function splitName(fullName) {
+    const trimmed = (fullName || '').trim();
+    if (!trimmed) return { firstName: '', lastName: '' };
+    const parts = trimmed.split(/\s+/);
+    if (parts.length === 1) return { firstName: '', lastName: parts[0] };
+    return { firstName: parts.slice(0, -1).join(' '), lastName: parts[parts.length - 1] };
+  }
+
+  function resolveSlotNames(slot) {
+    if (slot.userId && currentEmployeeMap[slot.userId]) {
+      const e = currentEmployeeMap[slot.userId];
+      if (e.firstName || e.lastName) return { firstName: e.firstName || '', lastName: e.lastName || '' };
+    }
+    if (slot.guestId && Array.isArray(allGuests)) {
+      const g = allGuests.find(x => x.guestId === slot.guestId);
+      if (g && (g.firstName || g.lastName)) return { firstName: g.firstName || '', lastName: g.lastName || '' };
+    }
+    return splitName(slot.name);
+  }
+
   function printCheckinSheet(sectionKey) {
     if (!currentDetail) return;
     const concert = currentDetail.concert;
     const slots = (currentDetail.slotGrids?.[sectionKey] || [])
       .filter(s => s.assignmentId)
-      .sort((a, b) => a.slotNumber - b.slotNumber);
+      .map(s => ({ ...s, ...resolveSlotNames(s) }))
+      .sort((a, b) => {
+        const last = (a.lastName || '').toLowerCase().localeCompare((b.lastName || '').toLowerCase());
+        if (last !== 0) return last;
+        const first = (a.firstName || '').toLowerCase().localeCompare((b.firstName || '').toLowerCase());
+        if (first !== 0) return first;
+        return a.slotNumber - b.slotNumber;
+      });
     if (!slots.length) {
       alert(`No assignments in ${SECTION_LABELS[sectionKey] || sectionKey} to print.`);
       return;
@@ -327,7 +364,8 @@ const Admin = (() => {
     <thead><tr>
       <th class="col-check">☐</th>
       <th class="col-slot">Slot</th>
-      <th>Name</th>
+      <th>Last Name</th>
+      <th>First Name</th>
       <th>Phone</th>
       <th class="col-sig">Signature</th>
     </tr></thead>
@@ -335,7 +373,8 @@ const Admin = (() => {
       ${slots.map(s => `<tr>
         <td class="col-check">☐</td>
         <td class="col-slot">#${s.slotNumber}</td>
-        <td>${htmlEscape(s.name || '')}</td>
+        <td>${htmlEscape(s.lastName || '')}</td>
+        <td>${htmlEscape(s.firstName || '')}</td>
         <td>${htmlEscape(s.phone || '')}</td>
         <td class="col-sig">&nbsp;</td>
       </tr>`).join('')}
@@ -478,6 +517,10 @@ const Admin = (() => {
                                  onclick="Admin.toggleAttended('${slot.assignmentId}', ${!slot.attended})">
                            ${slot.attended ? '✓' : '○'}
                          </button>
+                         ${(!slot.userId && !slot.guestId) ? `
+                         <button class="btn btn-sm btn-outline" style="padding:.2rem .5rem;font-size:.75rem;"
+                                 title="Edit name / email / phone"
+                                 onclick="Admin.editManualAssignment('${slot.assignmentId}')">✎</button>` : ''}
                          <button class="btn btn-sm btn-danger" style="padding:.2rem .5rem;font-size:.7rem;"
                            onclick="Admin.removeAssignment('${slot.assignmentId}','${key}',${slot.slotNumber})">✕</button>
                        </div>`
@@ -535,6 +578,15 @@ const Admin = (() => {
 
   // ── Assign Modal ──────────────────────────────────────────
 
+  // Suite/Club tickets are sold in pairs — assigning one ticket fills two slots.
+  // Parking + Hotel are single-slot only.
+  const PAIRABLE_SLOT_TYPES = new Set(['suite', 'club']);
+
+  function findOpenSlotNumbers(sectionKey) {
+    const slots = currentDetail?.slotGrids?.[sectionKey] || [];
+    return slots.filter(s => !s.assignmentId).map(s => s.slotNumber);
+  }
+
   async function openAssignModal(slotType, slotNumber) {
     pendingSlot = { slotType, slotNumber };
     document.getElementById('assignModalTitle').textContent =
@@ -544,28 +596,85 @@ const Admin = (() => {
     document.getElementById('manualName').value = '';
     document.getElementById('manualEmail').value = '';
     document.getElementById('manualPhone').value = '';
+    document.getElementById('assignTicketCount').value = '2';
 
-    // Populate employee dropdown from requests (with profile enrichment)
-    const requests = currentDetail?.requests || [];
+    // Load employees + guests up front — both BSB and standard paths need them
     let employeeMap = {};
     try {
       const employees = await Auth.apiRequest('/employees') || [];
       for (const e of employees) employeeMap[e.userId] = e;
     } catch (e) {}
-
-    const empSelect = document.getElementById('assignEmployeeSelect');
-    empSelect.innerHTML = requests.length
-      ? requests.map(r => {
-          const p = employeeMap[r.userId] || {};
-          const label = `#${r.rank} — ${r.name}${p.jobTitle ? ' · ' + p.jobTitle : ''}${p.location ? ' · ' + p.location : ''}`;
-          return `<option value="${r.userId}" data-name="${r.name}" data-email="${p.personalEmail || r.email}">${label}</option>`;
-        }).join('')
-      : '<option value="">No employee requests for this concert</option>';
-
-    // Populate guest dropdown
     if (!allGuests.length) {
       try { allGuests = await Auth.apiRequest('/guests') || []; } catch (e) {}
     }
+
+    const empSelect = document.getElementById('assignEmployeeSelect');
+    const empLabel = document.querySelector('#assignEmployee .form-label');
+    const empTypeOpt = document.getElementById('assignTypeEmployeeOpt');
+
+    if (slotType === 'bsbParking') {
+      // Source from current club assignments, sorted by location
+      empTypeOpt.textContent = 'Club ticket holder';
+      if (empLabel) empLabel.textContent = 'Select Club ticket holder';
+      const clubSlots = (currentDetail?.slotGrids?.club || []).filter(s => s.assignmentId);
+      const bsbAssignedUserIds = new Set(
+        (currentDetail?.slotGrids?.bsbParking || [])
+          .filter(s => s.assignmentId && s.userId).map(s => s.userId)
+      );
+      const bsbAssignedGuestIds = new Set(
+        (currentDetail?.slotGrids?.bsbParking || [])
+          .filter(s => s.assignmentId && s.guestId).map(s => s.guestId)
+      );
+      const rows = clubSlots.map(s => {
+        let source = 'manual', location = '', label = s.name || '';
+        if (s.userId) {
+          if (bsbAssignedUserIds.has(s.userId)) return null;
+          const p = employeeMap[s.userId] || {};
+          source = 'employee';
+          location = p.location || '';
+          label = `${s.name}${p.jobTitle ? ' · ' + p.jobTitle : ''}${location ? ' · ' + location : ''}`;
+        } else if (s.guestId) {
+          if (bsbAssignedGuestIds.has(s.guestId)) return null;
+          const g = (allGuests || []).find(x => x.guestId === s.guestId) || {};
+          source = 'guest';
+          location = g.location || '';
+          label = `${s.name}${location ? ' · ' + location : ''} · Guest`;
+        } else {
+          label = `${s.name} · Manual`;
+        }
+        return {
+          source, location, label,
+          userId: s.userId || '', guestId: s.guestId || '',
+          name: s.name || '', email: s.email || '', phone: s.phone || '',
+          clubSlot: s.slotNumber,
+        };
+      }).filter(Boolean);
+      rows.sort((a, b) => {
+        const la = (a.location || '￿').toLowerCase();
+        const lb = (b.location || '￿').toLowerCase();
+        return la.localeCompare(lb) || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+      });
+      empSelect.innerHTML = rows.length
+        ? rows.map((r, i) => `<option value="${i}"
+              data-source="${r.source}" data-user-id="${escapeAttr(r.userId)}"
+              data-guest-id="${escapeAttr(r.guestId)}" data-name="${escapeAttr(r.name)}"
+              data-email="${escapeAttr(r.email)}" data-phone="${escapeAttr(r.phone)}"
+            >Club #${r.clubSlot} — ${r.label}</option>`).join('')
+        : '<option value="">No Club ticket holders to choose from</option>';
+    } else {
+      // Standard flow — populate from this concert's preference requests
+      empTypeOpt.textContent = 'Employee (from requests)';
+      if (empLabel) empLabel.textContent = 'Select Employee';
+      const requests = currentDetail?.requests || [];
+      empSelect.innerHTML = requests.length
+        ? requests.map(r => {
+            const p = employeeMap[r.userId] || {};
+            const label = `#${r.rank} — ${r.name}${p.jobTitle ? ' · ' + p.jobTitle : ''}${p.location ? ' · ' + p.location : ''}`;
+            return `<option value="${r.userId}" data-source="employee" data-name="${escapeAttr(r.name)}" data-email="${escapeAttr(p.personalEmail || r.email || '')}">${label}</option>`;
+          }).join('')
+        : '<option value="">No employee requests for this concert</option>';
+    }
+
     const guestSelect = document.getElementById('assignGuestSelect');
     guestSelect.innerHTML = allGuests.length
       ? allGuests.map(g => `<option value="${g.guestId}" data-name="${g.fullName}" data-email="${g.email||''}">${g.lastName} — ${g.fullName}</option>`).join('')
@@ -580,6 +689,11 @@ const Admin = (() => {
     document.getElementById('assignEmployee').classList.toggle('hidden', type !== 'employee');
     document.getElementById('assignGuest').classList.toggle('hidden', type !== 'guest');
     document.getElementById('assignManual').classList.toggle('hidden', type !== 'manual');
+    // Ticket-count picker only applies to Guest / Manual on pairable (suite/club) slots.
+    // Employee path auto-pairs without a picker.
+    const pairable = pendingSlot && PAIRABLE_SLOT_TYPES.has(pendingSlot.slotType);
+    const showPicker = pairable && (type === 'guest' || type === 'manual');
+    document.getElementById('assignTicketCountGroup').classList.toggle('hidden', !showPicker);
   }
 
   function closeAssignModal() {
@@ -603,10 +717,21 @@ const Admin = (() => {
     if (type === 'employee') {
       const sel = document.getElementById('assignEmployeeSelect');
       const opt = sel.options[sel.selectedIndex];
-      if (!sel.value) { showAssignError('Please select an employee'); return; }
-      payload.userId = sel.value;
+      if (!sel.value) { showAssignError('Please select an option'); return; }
+      const source = opt.getAttribute('data-source') || 'employee';
       payload.name = opt.getAttribute('data-name');
-      payload.email = opt.getAttribute('data-email');
+      payload.email = opt.getAttribute('data-email') || '';
+      if (source === 'employee') {
+        const userId = opt.getAttribute('data-user-id') || sel.value;
+        payload.assigneeType = 'employee';
+        payload.userId = userId;
+      } else if (source === 'guest') {
+        payload.assigneeType = 'guest';
+        payload.guestId = opt.getAttribute('data-guest-id');
+      } else {
+        payload.assigneeType = 'manual';
+        payload.phone = opt.getAttribute('data-phone') || '';
+      }
     } else if (type === 'guest') {
       const sel = document.getElementById('assignGuestSelect');
       const opt = sel.options[sel.selectedIndex];
@@ -622,12 +747,40 @@ const Admin = (() => {
       payload.phone = document.getElementById('manualPhone').value.trim();
     }
 
+    // Decide how many slots to fill. Employee path on suite/club auto-pairs (always 2);
+    // Guest/Manual on suite/club honors the ticket-count picker. Parking/Hotel: always 1.
+    let ticketCount = 1;
+    if (PAIRABLE_SLOT_TYPES.has(pendingSlot.slotType)) {
+      if (payload.assigneeType === 'employee') {
+        ticketCount = 2;
+      } else if (type === 'guest' || type === 'manual') {
+        ticketCount = parseInt(document.getElementById('assignTicketCount').value, 10) || 1;
+      }
+    }
+
+    const slotNumbers = [pendingSlot.slotNumber];
+    if (ticketCount === 2) {
+      const other = findOpenSlotNumbers(pendingSlot.slotType)
+        .find(n => n !== pendingSlot.slotNumber);
+      if (other == null) {
+        if (!confirm(`Only one ${slotTypeLabel(pendingSlot.slotType)} slot left — assign solo (just 1 ticket)?`)) return;
+      } else {
+        slotNumbers.push(other);
+      }
+    }
+
     try {
-      await Auth.apiRequest('/assignments', { method: 'POST', body: JSON.stringify(payload) });
+      for (const slotNumber of slotNumbers) {
+        await Auth.apiRequest('/assignments', {
+          method: 'POST',
+          body: JSON.stringify({ ...payload, slotNumber }),
+        });
+      }
       closeAssignModal();
       openConcertDetail(currentConcert);
     } catch (err) {
       showAssignError(err.message);
+      openConcertDetail(currentConcert);
     }
   }
 
@@ -644,6 +797,31 @@ const Admin = (() => {
       openConcertDetail(currentConcert);
     } catch (err) {
       alert('Failed to remove: ' + err.message);
+    }
+  }
+
+  async function editManualAssignment(assignmentId) {
+    let slot = null;
+    for (const arr of Object.values(currentDetail?.slotGrids || {})) {
+      const found = arr.find(s => s.assignmentId === assignmentId);
+      if (found) { slot = found; break; }
+    }
+    if (!slot) { alert('Could not find that assignment.'); return; }
+    const name = prompt('Name:', slot.name || '');
+    if (name === null) return;
+    if (!name.trim()) { alert('Name is required.'); return; }
+    const email = prompt('Email:', slot.email || '');
+    if (email === null) return;
+    const phone = prompt('Phone:', slot.phone || '');
+    if (phone === null) return;
+    try {
+      await Auth.apiRequest(`/assignments/${assignmentId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name: name.trim(), email: email.trim(), phone: phone.trim() }),
+      });
+      openConcertDetail(currentConcert);
+    } catch (err) {
+      alert('Failed to update: ' + err.message);
     }
   }
 
@@ -687,6 +865,43 @@ const Admin = (() => {
       method: 'PUT',
       body: JSON.stringify({ name, date, doorsTime, musicTime, hotelRooms, hotelNotes }),
     }).then(() => openConcertDetail(currentConcert)).catch(err => alert('Failed: ' + err.message));
+  }
+
+  // ── Concert notes (autosave) ──────────────────────────────
+
+  function setNotesStatus(text, kind) {
+    const el = document.getElementById('notesStatus');
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = kind === 'error' ? 'var(--red)' : 'var(--gray-500)';
+  }
+
+  function scheduleNotesSave() {
+    setNotesStatus('Unsaved…');
+    clearTimeout(notesSaveTimer);
+    notesSaveTimer = setTimeout(saveNotesNow, 1200);
+  }
+
+  async function saveNotesNow() {
+    clearTimeout(notesSaveTimer);
+    notesSaveTimer = null;
+    const el = document.getElementById('concertNotes');
+    if (!el || !currentConcert) return;
+    const value = el.value;
+    if (value === lastSavedNotes) return;
+    setNotesStatus('Saving…');
+    try {
+      await Auth.apiRequest(`/concerts/${currentConcert}`, {
+        method: 'PUT',
+        body: JSON.stringify({ notes: value }),
+      });
+      lastSavedNotes = value;
+      if (currentDetail?.concert) currentDetail.concert.notes = value;
+      setNotesStatus('Saved');
+      setTimeout(() => { if (lastSavedNotes === el.value) setNotesStatus(''); }, 2000);
+    } catch (err) {
+      setNotesStatus('Save failed: ' + err.message, 'error');
+    }
   }
 
   // ── Jay's Guests ──────────────────────────────────────────
@@ -1333,7 +1548,8 @@ const Admin = (() => {
     return (str || '').replace(/'/g, '&apos;').replace(/"/g, '&quot;');
   }
 
-  async function cancelConcert(concertId, name) {
+  async function cancelConcert(concertId) {
+    const name = concerts.find(c => c.concertId === concertId)?.name || concertId;
     const msg = `Cancel "${name}"?\n\n` +
       `• It will be hidden from the employee picker\n` +
       `• Any existing ticket assignments for this concert will be deleted\n` +
@@ -1375,7 +1591,8 @@ const Admin = (() => {
     }
   }
 
-  async function uncancelConcert(concertId, name) {
+  async function uncancelConcert(concertId) {
+    const name = concerts.find(c => c.concertId === concertId)?.name || concertId;
     const msg = `Restore "${name}"?\n\n` +
       `It will reappear in the employee picker. Anyone who had it ranked still has it ranked.\n\n` +
       `Heads up: assignments removed when you cancelled are NOT restored — you'll need to re-assign tickets.\n\n` +
@@ -1393,28 +1610,35 @@ const Admin = (() => {
   }
 
   async function quickAssign(userId, name, email, slotType) {
-    const slots = currentDetail?.slotGrids?.[slotType] || [];
-    const openSlot = slots.find(s => !s.assignmentId);
-    if (!openSlot) {
-      alert(`No open ${slotType === 'club' ? 'Club Ticket' : 'Suite Ticket'} slots available.`);
+    const open = findOpenSlotNumbers(slotType);
+    const label = slotTypeLabel(slotType);
+    if (open.length === 0) {
+      alert(`No open ${label} slots available.`);
       return;
     }
+    let slotNumbers;
+    if (open.length === 1) {
+      if (!confirm(`Only one ${label} slot left — assign solo (just 1 ticket)?`)) return;
+      slotNumbers = [open[0]];
+    } else {
+      slotNumbers = [open[0], open[1]];
+    }
     try {
-      await Auth.apiRequest('/assignments', {
-        method: 'POST',
-        body: JSON.stringify({
-          concertId: currentConcert,
-          slotType,
-          slotNumber: openSlot.slotNumber,
-          assigneeType: 'employee',
-          userId,
-          name,
-          email,
-        }),
-      });
+      for (const slotNumber of slotNumbers) {
+        await Auth.apiRequest('/assignments', {
+          method: 'POST',
+          body: JSON.stringify({
+            concertId: currentConcert,
+            slotType, slotNumber,
+            assigneeType: 'employee',
+            userId, name, email,
+          }),
+        });
+      }
       await openConcertDetail(currentConcert);
     } catch (err) {
       alert('Failed to assign: ' + err.message);
+      await openConcertDetail(currentConcert);
     }
   }
 
@@ -1422,10 +1646,11 @@ const Admin = (() => {
     init, showTab,
     showList, openConcertDetail,
     toggleSlotEdit, saveSlotConfig,
-    openAssignModal, closeAssignModal, onAssignTypeChange, saveAssignment, removeAssignment, quickAssign, toggleAttended,
+    openAssignModal, closeAssignModal, onAssignTypeChange, saveAssignment, removeAssignment, editManualAssignment, quickAssign, toggleAttended,
     exportSectionEmails, exportAllEmails, printCheckinSheet,
     addHotelRoomInput, reindexHotelRooms,
     seedConcerts, showAddConcert, editConcertDetails, cancelConcert, uncancelConcert,
+    scheduleNotesSave, saveNotesNow,
     loadGuests, showGuestModal, closeGuestModal, saveGuest, deleteGuest,
     showGuestAssignModal, closeGuestAssignModal, onGuestAssignConcertChange, onGuestAssignSlotTypeChange, saveGuestAssignment,
     loadSettings, setSubmissionMode, saveSeason, saveFromEmail,
