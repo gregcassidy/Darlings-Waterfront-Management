@@ -293,6 +293,15 @@ const Admin = (() => {
     return `m:${n}|${e}`;
   }
 
+  function resolveLocation(slot) {
+    if (slot.userId && currentEmployeeMap[slot.userId]?.location) return currentEmployeeMap[slot.userId].location;
+    if (slot.guestId && Array.isArray(allGuests)) {
+      const g = allGuests.find(x => x.guestId === slot.guestId);
+      if (g?.location) return g.location;
+    }
+    return '';
+  }
+
   function exportSectionEmails(sectionKey) {
     if (!currentDetail) return;
     const slots = (currentDetail.slotGrids?.[sectionKey] || []).filter(s => s.assignmentId);
@@ -301,15 +310,15 @@ const Admin = (() => {
     for (const s of slots) {
       const key = recipientKey(s);
       const entry = byRecipient.get(key) || {
-        name: s.name || '', email: resolveEmail(s), phone: s.phone || '', slots: [],
+        name: s.name || '', email: resolveEmail(s), phone: s.phone || '', location: resolveLocation(s), slots: [],
       };
       entry.slots.push(s.slotNumber);
       byRecipient.set(key, entry);
     }
-    const rows = [['Name', 'Email', 'Phone', 'Slots']];
+    const rows = [['Name', 'Email', 'Phone', 'Location', 'Slots']];
     for (const e of byRecipient.values()) {
       const slotsStr = e.slots.sort((a, b) => a - b).map(n => `#${n}`).join(', ');
-      rows.push([e.name, e.email, e.phone, slotsStr]);
+      rows.push([e.name, e.email, e.phone, e.location, slotsStr]);
     }
     downloadCsv(`${concertSlug(currentDetail.concert)}_${sectionKey}_emails.csv`, rows);
   }
@@ -329,14 +338,16 @@ const Admin = (() => {
     for (const s of employeeSlots) {
       if (seen.has(s.userId)) continue;
       seen.add(s.userId);
-      people.push(resolveSlotNames(s));
+      const names = resolveSlotNames(s);
+      const location = currentEmployeeMap[s.userId]?.location || '';
+      people.push({ ...names, location });
     }
     people.sort((a, b) =>
       (a.firstName || '').toLowerCase().localeCompare((b.firstName || '').toLowerCase())
       || (a.lastName || '').toLowerCase().localeCompare((b.lastName || '').toLowerCase())
     );
-    const rows = [['Name']];
-    for (const p of people) rows.push([`${p.firstName || ''} ${p.lastName || ''}`.trim()]);
+    const rows = [['Name', 'Location']];
+    for (const p of people) rows.push([`${p.firstName || ''} ${p.lastName || ''}`.trim(), p.location]);
     downloadCsv(`${concertSlug(currentDetail.concert)}_${sectionKey}_employees.csv`, rows);
   }
 
@@ -369,7 +380,7 @@ const Admin = (() => {
     const concert = currentDetail.concert;
     const slots = (currentDetail.slotGrids?.[sectionKey] || [])
       .filter(s => s.assignmentId)
-      .map(s => ({ ...s, ...resolveSlotNames(s) }))
+      .map(s => ({ ...s, ...resolveSlotNames(s), location: resolveLocation(s) }))
       .sort((a, b) => {
         const last = (a.lastName || '').toLowerCase().localeCompare((b.lastName || '').toLowerCase());
         if (last !== 0) return last;
@@ -415,6 +426,7 @@ const Admin = (() => {
       <th class="col-slot">Slot</th>
       <th>Last Name</th>
       <th>First Name</th>
+      <th>Location</th>
       <th>Phone</th>
       <th class="col-sig">Signature</th>
     </tr></thead>
@@ -424,6 +436,7 @@ const Admin = (() => {
         <td class="col-slot">#${s.slotNumber}</td>
         <td>${htmlEscape(s.lastName || '')}</td>
         <td>${htmlEscape(s.firstName || '')}</td>
+        <td>${htmlEscape(s.location || '')}</td>
         <td>${htmlEscape(s.phone || '')}</td>
         <td class="col-sig">&nbsp;</td>
       </tr>`).join('')}
@@ -451,14 +464,14 @@ const Admin = (() => {
       for (const s of slots) {
         const rk = recipientKey(s);
         const entry = byRecipient.get(rk) || {
-          name: s.name || '', email: resolveEmail(s), phone: s.phone || '', bySection: {},
+          name: s.name || '', email: resolveEmail(s), phone: s.phone || '', location: resolveLocation(s), bySection: {},
         };
         (entry.bySection[key] = entry.bySection[key] || []).push(s.slotNumber);
         byRecipient.set(rk, entry);
       }
     }
     if (!byRecipient.size) { alert('No assignments to export for this concert.'); return; }
-    const rows = [['Name', 'Email', 'Phone', 'Assignments']];
+    const rows = [['Name', 'Email', 'Phone', 'Location', 'Assignments']];
     for (const e of byRecipient.values()) {
       const parts = [];
       for (const key of ['suite', 'club', 'bsbParking', 'suiteParking', 'hotel']) {
@@ -466,7 +479,7 @@ const Admin = (() => {
         if (!nums?.length) continue;
         parts.push(`${SECTION_LABELS[key]} ${nums.sort((a, b) => a - b).map(n => `#${n}`).join(', ')}`);
       }
-      rows.push([e.name, e.email, e.phone, parts.join('; ')]);
+      rows.push([e.name, e.email, e.phone, e.location, parts.join('; ')]);
     }
     downloadCsv(`${concertSlug(currentDetail.concert)}_all_emails.csv`, rows);
   }
