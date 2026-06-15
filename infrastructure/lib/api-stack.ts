@@ -17,6 +17,11 @@ export class ApiStack extends cdk.Stack {
 
     const { tables } = props;
 
+    // App-only Graph secret for Entra termination sync lives in SSM Parameter Store
+    // (SecureString), set out-of-band. CDK only references it by name, so `cdk deploy`
+    // can never overwrite the value and the secret is never in plaintext config.
+    const azureSecretParamName = '/darlings-waterfront/azure-client-secret';
+
     const commonEnv = {
       CONCERTS_TABLE: tables.concerts.tableName,
       EMPLOYEES_TABLE: tables.employees.tableName,
@@ -28,6 +33,9 @@ export class ApiStack extends cdk.Stack {
       // doesn't wipe them. Override with process.env if rotating.
       AZURE_TENANT_ID: process.env.AZURE_TENANT_ID || '0c92f65f-782b-462f-987e-bfcba4656cb2',
       AZURE_CLIENT_ID: process.env.AZURE_CLIENT_ID || '711c8df8-546e-462c-afd3-4392c792a3cb',
+      // SSM SecureString param name holding the Graph app secret (User.Read.All).
+      // The Lambda reads + decrypts it at runtime; sync returns 503 until it's set.
+      AZURE_CLIENT_SECRET_PARAM: azureSecretParamName,
       ADMIN_USER_IDS: process.env.ADMIN_USER_IDS || '',
       ADMIN_EMAILS: process.env.ADMIN_EMAILS || 'jay.darling@darlings.com,lorilei.porter@darlings.com',
     };
@@ -87,6 +95,12 @@ export class ApiStack extends cdk.Stack {
     // Lambda functions
     const concertsFn = createFn('Concerts', 'concerts', [tables.concerts, tables.settings, tables.preferences, tables.assignments]);
     const preferencesFn = createFn('Preferences', 'preferences', [tables.preferences, tables.employees, tables.settings, tables.concerts, tables.assignments]);
+    // Read-only access to the Entra Graph secret in SSM (SecureString uses the default
+    // aws/ssm KMS key, whose policy grants decrypt to callers with ssm:GetParameter).
+    preferencesFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ssm:GetParameter'],
+      resources: [`arn:aws:ssm:${this.region}:${this.account}:parameter${azureSecretParamName}`],
+    }));
     const assignmentsFn = createFn('Assignments', 'assignments', [tables.assignments, tables.concerts, tables.employees, tables.preferences]);
     const notificationsFn = createFn('Notifications', 'notifications', [tables.assignments, tables.employees, tables.concerts, tables.settings]);
     const settingsFn = createFn('Settings', 'settings', [tables.settings, tables.employees]);
@@ -147,6 +161,7 @@ export class ApiStack extends cdk.Stack {
     // /admin routes (admin-only views that span tables)
     const adminRoot = this.api.root.addResource('admin');
     adminRoot.addResource('all-submissions').addMethod('GET', new apigateway.LambdaIntegration(preferencesFn), auth);
+    adminRoot.addResource('sync-terminations').addMethod('POST', new apigateway.LambdaIntegration(preferencesFn), auth);
 
     // /guests routes (admin only — Jay's external contacts)
     const guests = this.api.root.addResource('guests');

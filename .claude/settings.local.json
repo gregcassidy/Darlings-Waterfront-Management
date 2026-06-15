@@ -96,7 +96,11 @@
       "Bash(dig +short CNAME _c51954052b7ada052aa7c119117f10f0.waterfront.darlings.com @1.1.1.1)",
       "Bash(nslookup -type=CNAME _c51954052b7ada052aa7c119117f10f0.waterfront.darlings.com 8.8.8.8)",
       "Bash(getent hosts *)",
-      "Bash(command -v convert magick cwebp ffmpeg python3)"
+      "Bash(command -v convert magick cwebp ffmpeg python3)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(zip -q -r /tmp/preferences.zip . -x \"*.zip\")",
+      "Bash(unzip -l /tmp/preferences.zip)",
+      "Bash(echo \"tsc exit: $?\")"
     ]
   }
 }

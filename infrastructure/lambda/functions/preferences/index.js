@@ -1,9 +1,29 @@
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm');
 const crypto = require('crypto');
 
 const client = new DynamoDBClient({});
 const db = DynamoDBDocumentClient.from(client);
+const ssm = new SSMClient({});
+
+// Graph app secret, resolved from SSM (SecureString) and cached across warm invocations.
+// Falls back to the legacy AZURE_CLIENT_SECRET env var if it's still set.
+let _azureSecretCache = null;
+async function getAzureClientSecret() {
+  if (process.env.AZURE_CLIENT_SECRET) return process.env.AZURE_CLIENT_SECRET;
+  if (_azureSecretCache) return _azureSecretCache;
+  const name = process.env.AZURE_CLIENT_SECRET_PARAM;
+  if (!name) return null;
+  try {
+    const out = await ssm.send(new GetParameterCommand({ Name: name, WithDecryption: true }));
+    _azureSecretCache = out.Parameter?.Value || null;
+    return _azureSecretCache;
+  } catch (e) {
+    console.error('Failed to read Azure client secret from SSM:', e.message);
+    return null;
+  }
+}
 
 const DEALERSHIPS = [
   'Ford VW Audi', 'Honda Nissan Volvo', 'Kia', 'Value Center', 'CVC',
@@ -149,6 +169,35 @@ async function ensureEmployeeRecord(user, extraFields = {}) {
   }));
 }
 
+// Delete every assignment held by a user (frees their ticket/parking slots) and
+// return a summary of what was freed, enriched with concert name/date for the UI.
+async function clearUserAssignments(userId) {
+  const result = await db.send(new QueryCommand({
+    TableName: ASSIGNMENTS_TABLE,
+    IndexName: 'userId-index',
+    KeyConditionExpression: 'userId = :u',
+    ExpressionAttributeValues: { ':u': userId },
+  }));
+  const items = result.Items || [];
+  for (const a of items) {
+    await db.send(new DeleteCommand({ TableName: ASSIGNMENTS_TABLE, Key: { assignmentId: a.assignmentId } }));
+  }
+
+  const concertIds = [...new Set(items.map(a => a.concertId))];
+  const concertMap = {};
+  for (const cId of concertIds) {
+    const c = await db.send(new GetCommand({ TableName: CONCERTS_TABLE, Key: { concertId: cId } }));
+    if (c.Item) concertMap[cId] = c.Item;
+  }
+  return items.map(a => ({
+    concertId: a.concertId,
+    slotType: a.slotType,
+    slotNumber: a.slotNumber,
+    concertName: concertMap[a.concertId]?.name || a.concertId,
+    concertDate: concertMap[a.concertId]?.date || '',
+  }));
+}
+
 async function getMyPreferences(event) {
   const user = getUser(event);
   const season = await getCurrentSeason();
@@ -169,6 +218,11 @@ async function submitPreferences(event) {
   // Look up current employee record + system mode to compute the user's effective mode
   const empResult = await db.send(new GetCommand({ TableName: EMPLOYEES_TABLE, Key: { userId: user.userId } }));
   const employeeRecord = empResult.Item;
+
+  if (employeeRecord?.isTerminated) {
+    return res(403, { error: 'This account has been deactivated. Please contact an administrator.' });
+  }
+
   const systemStatus = await getSubmissionsStatus();
   const effectiveMode = user.role === 'admin' ? 'open' : getEffectiveMode(systemStatus, employeeRecord);
 
@@ -366,6 +420,7 @@ async function getAllEmployees(event) {
   // is set up that way), and the concert detail UI uses this map to enrich rows.
   const result = await db.send(new ScanCommand({ TableName: EMPLOYEES_TABLE }));
   const employees = (result.Items || [])
+    .filter(e => !e.isTerminated)
     .sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
   return res(200, employees);
 }
@@ -375,6 +430,7 @@ async function getAllSubmissions(event) {
   if (user.role !== 'admin') return res(403, { error: 'Admin only' });
 
   const season = event.queryStringParameters?.season || await getCurrentSeason();
+  const includeTerminated = event.queryStringParameters?.includeTerminated === '1';
 
   const [prefsResult, empsResult, assignmentsResult, concertsResult] = await Promise.all([
     db.send(new QueryCommand({
@@ -448,6 +504,7 @@ async function getAllSubmissions(event) {
     seenUserIds.add(pref.userId);
     const isExternal = pref.submissionType === 'external';
     const emp = employeeMap[pref.userId];
+    if (!isExternal && emp?.isTerminated && !includeTerminated) continue;
     let lastName = '', firstName = '', location = '', displayName = '';
     if (isExternal) {
       lastName    = pref.lastName  || '';
@@ -470,6 +527,7 @@ async function getAllSubmissions(event) {
       submissionType: isExternal ? 'external' : 'employee',
       lastName, firstName, displayName, location,
       canEditFreely: !!emp?.canEditFreely,
+      isTerminated: !!emp?.isTerminated,
       submittedAt: pref.submittedAt || null,
       choices: buildChoices(pref.preferences, pref.userId),
     });
@@ -478,6 +536,7 @@ async function getAllSubmissions(event) {
   // Include employees with records but no submission yet
   for (const emp of (empsResult.Items || [])) {
     if (seenUserIds.has(emp.userId)) continue;
+    if (emp.isTerminated && !includeTerminated) continue;
     submissions.push({
       userId: emp.userId,
       submissionType: 'employee',
@@ -486,6 +545,7 @@ async function getAllSubmissions(event) {
       displayName: emp.displayName || '',
       location: emp.location || '',
       canEditFreely: !!emp.canEditFreely,
+      isTerminated: !!emp.isTerminated,
       submittedAt: null,
       choices: buildChoices([], emp.userId),
     });
@@ -510,8 +570,27 @@ async function adminUpdateEmployee(targetUserId, event) {
     updated.location = (body.location || '').toString().trim();
   }
 
+  // Termination toggle. Flipping ON frees the employee's held slots (assignments are
+  // deleted, not archived — reinstating does NOT restore them; the admin reassigns).
+  let freedSlots = [];
+  if (body.isTerminated !== undefined) {
+    const nowTerminated = !!body.isTerminated;
+    const wasTerminated = !!existing.Item.isTerminated;
+    updated.isTerminated = nowTerminated;
+    if (nowTerminated && !wasTerminated) {
+      updated.terminatedAt = new Date().toISOString();
+      updated.terminatedBy = user.userId;
+      updated.terminationSource = body.terminationSource === 'entra' ? 'entra' : 'manual';
+      freedSlots = await clearUserAssignments(targetUserId);
+    } else if (!nowTerminated && wasTerminated) {
+      delete updated.terminatedAt;
+      delete updated.terminatedBy;
+      delete updated.terminationSource;
+    }
+  }
+
   await db.send(new PutCommand({ TableName: EMPLOYEES_TABLE, Item: updated }));
-  return res(200, updated);
+  return res(200, { ...updated, freedSlots });
 }
 
 async function getUserPreferences(userId, event) {
@@ -527,6 +606,116 @@ async function getUserPreferences(userId, event) {
   }));
 
   return res(200, result.Item || { userId, season, preferences: [] });
+}
+
+// ── Entra (Azure AD) auto-sync ─────────────────────────────
+// Acquire an app-only Graph token via the client-credentials flow. Requires the
+// app registration to hold the `User.Read.All` application permission (admin
+// consent) and the secret to be present in SSM. Returns null when unconfigured.
+async function getGraphAppToken() {
+  const tenant = process.env.AZURE_TENANT_ID;
+  const clientId = process.env.AZURE_CLIENT_ID;
+  const clientSecret = await getAzureClientSecret();
+  if (!clientSecret || !tenant || !clientId || tenant.startsWith('REPLACE')) return null;
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: 'https://graph.microsoft.com/.default',
+    grant_type: 'client_credentials',
+  });
+  const resp = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+  if (!resp.ok) {
+    console.error('Graph token request failed:', resp.status, await resp.text());
+    return null;
+  }
+  const data = await resp.json();
+  return data.access_token || null;
+}
+
+// Check each known employee's Entra account status and terminate any whose account
+// is disabled or deleted. Manual terminations are left untouched.
+async function syncTerminations(event) {
+  const user = getUser(event);
+  if (user.role !== 'admin') return res(403, { error: 'Admin only' });
+
+  const token = await getGraphAppToken();
+  if (!token) {
+    return res(503, {
+      error: 'Entra sync is not configured. Store the Graph app secret in SSM and grant the app the User.Read.All application permission with admin consent.',
+    });
+  }
+
+  const empsResult = await db.send(new ScanCommand({ TableName: EMPLOYEES_TABLE }));
+  const candidates = (empsResult.Items || []).filter(e =>
+    !e.isTerminated && e.userId && !e.userId.startsWith('external-') && !e.userId.startsWith('dev-'));
+
+  // Resolve account status via Graph's $batch endpoint (max 20 sub-requests each),
+  // run in parallel so hundreds of employees resolve in a couple of seconds rather
+  // than timing out the way one-request-per-employee did.
+  const chunks = [];
+  for (let i = 0; i < candidates.length; i += 20) chunks.push(candidates.slice(i, i + 20));
+
+  const errors = [];
+  const statusByUser = {};
+  const batchResults = await Promise.all(chunks.map(async (chunk) => {
+    try {
+      const requests = chunk.map((emp, idx) => ({
+        id: String(idx),
+        method: 'GET',
+        url: `/users/${encodeURIComponent(emp.userId)}?$select=id,accountEnabled`,
+      }));
+      const resp = await fetch('https://graph.microsoft.com/v1.0/$batch', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        return { chunk, error: `Graph $batch failed: ${resp.status} ${text.slice(0, 200)}` };
+      }
+      return { chunk, data: await resp.json() };
+    } catch (e) {
+      return { chunk, error: e.message };
+    }
+  }));
+
+  for (const br of batchResults) {
+    if (br.error) {
+      for (const emp of br.chunk) errors.push({ userId: emp.userId, error: br.error });
+      continue;
+    }
+    for (const r of (br.data.responses || [])) {
+      const emp = br.chunk[parseInt(r.id, 10)];
+      if (!emp) continue;
+      if (r.status === 404) statusByUser[emp.userId] = 'deleted';
+      else if (r.status >= 200 && r.status < 300) {
+        statusByUser[emp.userId] = (r.body && r.body.accountEnabled === false) ? 'disabled' : 'active';
+      } else {
+        errors.push({ userId: emp.userId, status: r.status });
+      }
+    }
+  }
+
+  // Only the matched (disabled/deleted) accounts touch DynamoDB — typically a handful.
+  const terminated = [];
+  for (const emp of candidates) {
+    const st = statusByUser[emp.userId];
+    if (st !== 'disabled' && st !== 'deleted') continue;
+    const now = new Date().toISOString();
+    await db.send(new PutCommand({
+      TableName: EMPLOYEES_TABLE,
+      Item: { ...emp, isTerminated: true, terminatedAt: now, terminatedBy: user.userId, terminationSource: 'entra', updatedAt: now },
+    }));
+    const freedSlots = await clearUserAssignments(emp.userId);
+    terminated.push({ userId: emp.userId, displayName: emp.displayName || '', reason: st, freedSlots });
+  }
+
+  return res(200, { checked: candidates.length, terminatedCount: terminated.length, terminated, errors });
 }
 
 exports.handler = async (event) => {
@@ -545,6 +734,7 @@ exports.handler = async (event) => {
     if (resource === '/employees' && method === 'GET')             return getAllEmployees(event);
     if (resource === '/employees/{userId}' && method === 'PUT')    return adminUpdateEmployee(userId, event);
     if (resource === '/admin/all-submissions' && method === 'GET') return getAllSubmissions(event);
+    if (resource === '/admin/sync-terminations' && method === 'POST') return syncTerminations(event);
 
     return res(405, { error: 'Method not allowed' });
   } catch (err) {

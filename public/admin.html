@@ -207,7 +207,14 @@
     <div id="submissionsToolbar" class="hidden" style="display:flex;gap:.5rem;align-items:center;margin-bottom:.5rem;flex-wrap:wrap;">
       <input type="text" id="submissionsSearch" class="form-control" placeholder="Search anywhere — name, location, concert…"
              oninput="Admin.onSubmissionsSearch(this.value)" style="flex:1;min-width:240px;max-width:480px;" />
+      <select id="submissionsStatusFilter" class="form-control" style="width:auto;"
+              onchange="Admin.setSubmissionsStatusFilter(this.value)" title="Show active, terminated, or all employees">
+        <option value="active" selected>Active only</option>
+        <option value="terminated">Terminated only</option>
+        <option value="all">All</option>
+      </select>
       <button class="btn btn-outline btn-sm" onclick="Admin.clearSubmissionsFilters()">Clear filters</button>
+      <button class="btn btn-outline btn-sm" onclick="Admin.syncTerminations()" title="Check Entra (Azure AD) and terminate disabled/removed accounts">⟳ Sync Entra</button>
     </div>
 
     <div id="submissionsWrap" class="card hidden" style="padding:0;overflow:hidden;">

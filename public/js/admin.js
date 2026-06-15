@@ -1301,6 +1301,7 @@ const Admin = (() => {
     { key: 'choice5', label: 'Choice 5', filter: 'choice', choiceIdx: 4, sortable: true },
     { key: 'canEditFreely', label: 'Override', filter: 'select',
       options: [['', 'All'], ['yes', 'On'], ['no', 'Off']], sortable: true },
+    { key: 'status', label: 'Status', sortable: false },
   ];
 
   const COLOR_OPTIONS = [
@@ -1323,6 +1324,7 @@ const Admin = (() => {
     sortBy: 'lastName',
     sortDir: 'asc',
     search: '',
+    statusFilter: 'active',
     filters: {},
   };
 
@@ -1356,7 +1358,8 @@ const Admin = (() => {
     document.getElementById('submissionsLoading').classList.remove('hidden');
     document.getElementById('submissionsWrap').classList.add('hidden');
     try {
-      const result = await Auth.apiRequest('/admin/all-submissions?season=2026');
+      const includeTerminated = subState.statusFilter !== 'active' ? '&includeTerminated=1' : '';
+      const result = await Auth.apiRequest(`/admin/all-submissions?season=2026${includeTerminated}`);
       subState.data = result?.submissions || [];
       if (result?.dealerships?.length) subState.dealerships = result.dealerships;
       resetSubFilters();
@@ -1384,6 +1387,7 @@ const Admin = (() => {
     filterRow.className = 'filter-row';
 
     headerRow.innerHTML = SUB_COLUMNS.map(col => {
+      if (col.sortable === false) return `<th>${col.label}</th>`;
       const active = subState.sortBy === col.key;
       const arrow = active ? (subState.sortDir === 'asc' ? '▲' : '▼') : '⇅';
       return `<th class="sort-header${active ? ' active' : ''}" data-col="${col.key}">
@@ -1442,6 +1446,11 @@ const Admin = (() => {
   function passesFilters(row) {
     const f = subState.filters;
     const txtMatch = (val, q) => !q || (val || '').toString().toLowerCase().includes(q.toLowerCase());
+
+    // Termination status (driven by the toolbar selector, not a column filter)
+    const sf = subState.statusFilter || 'active';
+    if (sf === 'active' && row.isTerminated) return false;
+    if (sf === 'terminated' && !row.isTerminated) return false;
 
     // Global search: match across name, location, displayName, all choice names
     const search = (subState.search || '').trim().toLowerCase();
@@ -1573,6 +1582,16 @@ const Admin = (() => {
           onchange="Admin.setEmployeeLocation('${row.userId}', this.value)">${optParts.join('')}</select></td>`;
       }
 
+      let statusCell;
+      if (row.submissionType === 'external') {
+        statusCell = '<span class="text-muted text-xs">—</span>';
+      } else if (row.isTerminated) {
+        statusCell = `<span class="badge badge-tiny" style="background:#fee2e2;color:#991b1b;">Terminated</span>
+          <button class="btn btn-sm btn-outline" style="margin-left:.3rem;" onclick="Admin.terminateEmployee('${row.userId}', false)">Reinstate</button>`;
+      } else {
+        statusCell = `<button class="btn btn-sm btn-danger" onclick="Admin.terminateEmployee('${row.userId}', true)">Terminate</button>`;
+      }
+
       return `<tr data-userid="${row.userId}">
         <td>${row.lastName || '<span class="text-muted">—</span>'}</td>
         <td>${row.firstName || '<span class="text-muted">—</span>'}</td>
@@ -1580,6 +1599,7 @@ const Admin = (() => {
         <td>${typeLabel}</td>
         ${choiceCells}
         <td style="text-align:center;">${overrideCell}</td>
+        <td style="text-align:center;white-space:nowrap;">${statusCell}</td>
       </tr>`;
     }).join('');
   }
@@ -1618,6 +1638,58 @@ const Admin = (() => {
       row.canEditFreely = prev;
       renderSubmissionsBody();
       alert('Failed to update override: ' + err.message);
+    }
+  }
+
+  function setSubmissionsStatusFilter(value) {
+    subState.statusFilter = value || 'active';
+    // 'active' uses the default (terminated excluded server-side); the others need
+    // the full set, so reload from the API rather than just re-filtering client-side.
+    loadSubmissions();
+  }
+
+  async function terminateEmployee(userId, terminate) {
+    const row = subState.data.find(r => r.userId === userId);
+    const who = row ? (`${row.firstName} ${row.lastName}`.trim() || row.displayName || 'this employee') : 'this employee';
+    if (terminate) {
+      if (!confirm(`Terminate ${who}?\n\nThey will be removed from all entry, request, and assignment lists, and any ticket/parking slots they currently hold will be freed for reassignment.\n\nThis does not delete their record — you can reinstate them later, but freed slots are NOT automatically restored.`)) return;
+    } else {
+      if (!confirm(`Reinstate ${who}? They will reappear in the lists. Previously freed slots are NOT restored.`)) return;
+    }
+    try {
+      const result = await Auth.apiRequest(`/employees/${userId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ isTerminated: terminate }),
+      });
+      await loadSubmissions();
+      if (terminate) {
+        const freed = result?.freedSlots || [];
+        const summary = freed.length
+          ? 'Freed slots:\n' + freed.map(f =>
+              `• ${slotTypeLabel(f.slotType)} #${f.slotNumber} — ${f.concertName}${f.concertDate ? ' (' + formatDate(f.concertDate) + ')' : ''}`).join('\n')
+          : 'No assigned slots to free.';
+        alert(`${who} terminated.\n\n${summary}`);
+      }
+    } catch (err) {
+      alert('Failed: ' + err.message);
+    }
+  }
+
+  async function syncTerminations() {
+    if (!confirm('Sync with Entra (Azure AD)?\n\nEmployees whose Azure accounts are disabled or deleted will be terminated and their slots freed.')) return;
+    try {
+      const result = await Auth.apiRequest('/admin/sync-terminations', { method: 'POST', body: '{}' });
+      const n = result?.terminatedCount || 0;
+      let msg = `Entra sync complete. Checked ${result?.checked ?? 0} employee(s), terminated ${n}.`;
+      if (n) {
+        msg += '\n\n' + (result.terminated || []).map(t =>
+          `• ${t.displayName || t.userId} — ${(t.freedSlots || []).length} slot(s) freed`).join('\n');
+      }
+      if (result?.errors?.length) msg += `\n\n${result.errors.length} lookup error(s) — see CloudWatch.`;
+      await loadSubmissions();
+      alert(msg);
+    } catch (err) {
+      alert('Entra sync failed: ' + err.message);
     }
   }
 
@@ -1765,5 +1837,6 @@ const Admin = (() => {
     loadSettings, setSubmissionMode, saveSeason, saveFromEmail,
     loadSubmissions, toggleOverride, setEmployeeLocation,
     onSubmissionsSearch, clearSubmissionsFilters,
+    setSubmissionsStatusFilter, terminateEmployee, syncTerminations,
   };
 })();

@@ -52,7 +52,7 @@ CloudFront → S3 (login.html, index.html, admin.html, css/, js/)
 | Table | PK | SK | Purpose |
 |-------|----|----|---------|
 | `WF-Concerts` | concertId | — | Season lineup. concertId format: `2026-01` through `2026-25` |
-| `WF-Employees` | userId | — | Auto-created on first preference submission |
+| `WF-Employees` | userId | — | Auto-created on first preference submission. `isTerminated` (bool) hides the employee from all lists + frees their slots; stamped with `terminatedAt`/`terminatedBy`/`terminationSource` (`manual`\|`entra`) |
 | `WF-Preferences` | userId | season | Top-5 submissions. `preferences` = [{rank, concertId}] |
 | `WF-Assignments` | assignmentId | — | Per-slot assignments (suite/club/bsbParking/suiteParking) |
 | `WF-Settings` | settingKey | — | `submissionsStatus` (`open`/`limited`/`closed`), `currentSeason`, `notificationFromEmail`. Legacy `submissionsOpen` still read as fallback |
@@ -145,6 +145,29 @@ aws dynamodb put-item --table-name WF-Settings \
 - `closed` — locked except new employees and override users
 - Adding or cancelling a concert while `closed` auto-flips status to `limited`
 
+### Terminate an employee (remove from entries)
+Admin → All Submissions → **Terminate** button on the employee's row. This sets
+`isTerminated=true` and immediately deletes their ticket/parking assignments (freeing
+those slots — the freed list is shown back to the admin). Terminated employees are
+filtered out of `/employees`, the All-Submissions view, and concert Requests, and are
+blocked from submitting preferences. The **Active/Terminated/All** selector controls
+visibility; **Reinstate** clears the flag (it does *not* restore freed slots).
+
+`PUT /employees/{userId}` body `{ "isTerminated": true }` does the same via API.
+
+### Sync terminations from Entra (Azure AD)
+Admin → All Submissions → **⟳ Sync Entra**, or `POST /admin/sync-terminations`. Uses an
+app-only Microsoft Graph token (client-credentials) to check each employee's
+`accountEnabled`; disabled/deleted accounts are auto-terminated (`terminationSource=entra`).
+**Requires:** the Graph app secret stored in SSM SecureString param
+`/darlings-waterfront/azure-client-secret` (the Lambda reads + decrypts it at runtime —
+no redeploy needed to set/rotate it) **and** the App Registration granted the
+`User.Read.All` *application* permission with admin consent. Until configured the
+endpoint returns 503 (manual termination still works). Lookups use Graph `$batch`
+(20/call, parallel) to stay well under the API Gateway timeout for the full roster.
+
+Rotate the secret anytime with `aws ssm put-parameter --name /darlings-waterfront/azure-client-secret --type SecureString --value "$(cat /tmp/sec.txt)" --overwrite --region us-east-1` (no deploy required).
+
 ### View Lambda logs
 ```bash
 aws logs tail /aws/lambda/DarlingsWaterfrontApiStack-Concerts --follow
@@ -174,6 +197,7 @@ aws dynamodb query --table-name WF-Preferences \
 
 ## Open Items
 - [ ] Get Azure AD App Registration client ID + tenant ID
+- [ ] **Entra termination sync**: grant the App Registration `User.Read.All` (application) permission + admin consent, and store the Graph secret in SSM param `/darlings-waterfront/azure-client-secret` (SecureString), then "⟳ Sync Entra" goes live. Manual termination works without this.
 - [ ] Verify SES sender email address in AWS console
 - [ ] Deploy updated stacks (WF-JaysGuests table + guests Lambda are new this session)
 - [ ] Seed 2026 concert data after deploy

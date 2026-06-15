@@ -1,5 +1,5 @@
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand, UpdateCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 
 const client = new DynamoDBClient({});
 const db = DynamoDBDocumentClient.from(client);
@@ -7,6 +7,7 @@ const db = DynamoDBDocumentClient.from(client);
 const ASSIGNMENTS_TABLE = process.env.ASSIGNMENTS_TABLE;
 const CONCERTS_TABLE = process.env.CONCERTS_TABLE;
 const PREFERENCES_TABLE = process.env.PREFERENCES_TABLE;
+const EMPLOYEES_TABLE = process.env.EMPLOYEES_TABLE;
 
 const res = (statusCode, body) => ({
   statusCode,
@@ -89,14 +90,20 @@ async function getConcertAssignmentsHandler(concertId, event) {
 
   // Get employee requests for this concert
   const season = concert.Item.season || '2026';
-  const prefsResult = await db.send(new QueryCommand({
-    TableName: PREFERENCES_TABLE,
-    IndexName: 'season-index',
-    KeyConditionExpression: 'season = :s',
-    ExpressionAttributeValues: { ':s': season },
-  }));
+  const [prefsResult, empsResult] = await Promise.all([
+    db.send(new QueryCommand({
+      TableName: PREFERENCES_TABLE,
+      IndexName: 'season-index',
+      KeyConditionExpression: 'season = :s',
+      ExpressionAttributeValues: { ':s': season },
+    })),
+    db.send(new ScanCommand({ TableName: EMPLOYEES_TABLE })),
+  ]);
+  // Terminated employees should not appear as requesters (their slots are freed)
+  const terminatedSet = new Set((empsResult.Items || []).filter(e => e.isTerminated).map(e => e.userId));
   const requests = [];
   for (const pref of (prefsResult.Items || [])) {
+    if (terminatedSet.has(pref.userId)) continue;
     const choice = (pref.preferences || []).find(p => p.concertId === concertId);
     if (choice) {
       requests.push({
@@ -208,7 +215,6 @@ async function getAllAssignments(event) {
     return res(200, items);
   }
   // Full scan for reporting purposes
-  const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
   const result = await db.send(new ScanCommand({ TableName: ASSIGNMENTS_TABLE }));
   return res(200, result.Items || []);
 }
