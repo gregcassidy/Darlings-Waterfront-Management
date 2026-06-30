@@ -548,6 +548,15 @@ const Admin = (() => {
     container.innerHTML = header + sections.map(({ key, label, icon }) => {
       const slots = slotGrids[key] || [];
       const filled = slots.filter(s => s.assignmentId).length;
+      // Display order: assigned slots first (by number), then open slots grouped
+      // below so coordinators can see available capacity at a glance. The slot's
+      // real #number label is preserved, so this is purely a visual regrouping.
+      const orderedSlots = [...slots].sort((a, b) => {
+        const aOpen = a.assignmentId ? 0 : 1;
+        const bOpen = b.assignmentId ? 0 : 1;
+        if (aOpen !== bOpen) return aOpen - bOpen;
+        return a.slotNumber - b.slotNumber;
+      });
       const hotelNotes = key === 'hotel' && concert.hotelNotes && !(concert.hotelRoomDetails || []).length
         ? `<div class="text-xs text-muted" style="padding:.25rem .75rem .5rem;font-style:italic;">${concert.hotelNotes}</div>`
         : '';
@@ -564,8 +573,12 @@ const Admin = (() => {
           </div>
           ${hotelNotes}
           <div style="display:flex;flex-direction:column;gap:.375rem;">
-            ${slots.map(slot => {
+            ${orderedSlots.map((slot, idx) => {
               const isAssigned = !!slot.assignmentId;
+              // Label the boundary between the assigned group and the open group.
+              const divider = (!isAssigned && idx === filled && filled > 0 && filled < slots.length)
+                ? `<div class="slot-open-divider">${slots.length - filled} open slot${slots.length - filled === 1 ? '' : 's'}</div>`
+                : '';
               const profile = slot.userId ? (employeeMap[slot.userId] || {}) : {};
               const personDetails = [profile.jobTitle, profile.location].filter(Boolean).join(' · ');
               const roomDetail = key === 'hotel'
@@ -573,6 +586,7 @@ const Admin = (() => {
               const roomInfo = roomDetail
                 ? [roomDetail.type, roomDetail.location].filter(Boolean).join(' · ') : '';
               return `
+                ${divider}
                 <div class="slot-item ${isAssigned ? 'assigned' : 'empty'}">
                   <div style="flex:1;overflow:hidden;">
                     <div style="display:flex;align-items:center;gap:.5rem;">

@@ -230,6 +230,16 @@ tr:hover td { background: var(--blue-pale); }
 .slot-num { font-weight: 700; color: var(--gray-500); min-width: 2rem; font-size: .8rem; flex-shrink: 0; }
 .slot-name { font-weight: 500; color: var(--gray-800); }
 .slot-empty-label { flex: 1; color: var(--gray-400); font-style: italic; }
+.slot-open-divider {
+  margin: .25rem 0 .125rem;
+  padding-top: .375rem;
+  border-top: 1px dashed var(--gray-200);
+  color: var(--gray-400);
+  font-size: .7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
 
 /* ── Preference slots ── */
 .pref-slots { display: flex; flex-direction: column; gap: .5rem; margin-bottom: 1.5rem; }
