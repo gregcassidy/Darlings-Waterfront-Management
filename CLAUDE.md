@@ -197,7 +197,7 @@ aws dynamodb query --table-name WF-Preferences \
 
 ## Open Items
 - [ ] Get Azure AD App Registration client ID + tenant ID
-- [ ] **Entra termination sync**: grant the App Registration `User.Read.All` (application) permission + admin consent, and store the Graph secret in SSM param `/darlings-waterfront/azure-client-secret` (SecureString), then "⟳ Sync Entra" goes live. Manual termination works without this.
+- [x] **Entra termination sync — LIVE** (2026-07-14): SSM secret stored + `User.Read.All` (application) permission with admin consent confirmed. "⟳ Sync Entra" verified end-to-end (423 checked, 0 errors). Rotate the secret anytime with `aws ssm put-parameter --overwrite` — no redeploy.
 - [ ] Verify SES sender email address in AWS console
 - [ ] Deploy updated stacks (WF-JaysGuests table + guests Lambda are new this session)
 - [ ] Seed 2026 concert data after deploy

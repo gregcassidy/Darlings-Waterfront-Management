@@ -12,3 +12,4 @@ infrastructure/lambda/shared/*.d.ts
 !infrastructure/lambda/functions/**/*.js
 .claude/settings.local.json
 mysecret.txt
+tmp/sec.txt

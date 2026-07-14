@@ -100,7 +100,9 @@
       "Bash(echo \"exit: $?\")",
       "Bash(zip -q -r /tmp/preferences.zip . -x \"*.zip\")",
       "Bash(unzip -l /tmp/preferences.zip)",
-      "Bash(echo \"tsc exit: $?\")"
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(aws s3api *)",
+      "Bash(aws ssm *)"
     ]
   }
 }
