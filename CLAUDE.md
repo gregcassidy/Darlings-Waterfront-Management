@@ -165,6 +165,13 @@ no redeploy needed to set/rotate it) **and** the App Registration granted the
 `User.Read.All` *application* permission with admin consent. Until configured the
 endpoint returns 503 (manual termination still works). Lookups use Graph `$batch`
 (20/call, parallel) to stay well under the API Gateway timeout for the full roster.
+Each outbound Graph call (token + every `$batch`) is bounded by an 8s
+`AbortSignal.timeout` so one stalled connection can't hang the whole sync to the
+30s Lambda limit (that used to surface in the browser as "Entra sync failed:
+Failed to fetch" — API Gateway's 29s 504 carried no CORS header). The Graph app
+token is cached across warm invocations. API Gateway `DEFAULT_4XX`/`DEFAULT_5XX`
+gateway responses now include CORS headers so any gateway-level error stays
+legible instead of an opaque "Failed to fetch".
 
 Rotate the secret anytime with `aws ssm put-parameter --name /darlings-waterfront/azure-client-secret --type SecureString --value "$(cat /tmp/sec.txt)" --overwrite --region us-east-1` (no deploy required).
 

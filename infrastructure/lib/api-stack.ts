@@ -73,6 +73,23 @@ export class ApiStack extends cdk.Stack {
       },
     });
 
+    // Attach CORS headers to API-Gateway-generated error responses (timeouts,
+    // authorizer denials, 5xx). Without these, the browser can't read the error
+    // body and surfaces the opaque "Failed to fetch" instead of a real message.
+    const corsErrorHeaders = {
+      'Access-Control-Allow-Origin': "'*'",
+      'Access-Control-Allow-Headers': "'Content-Type,Authorization'",
+      'Access-Control-Allow-Methods': "'OPTIONS,GET,PUT,POST,DELETE,PATCH,HEAD'",
+    };
+    this.api.addGatewayResponse('Default4xxCors', {
+      type: apigateway.ResponseType.DEFAULT_4XX,
+      responseHeaders: corsErrorHeaders,
+    });
+    this.api.addGatewayResponse('Default5xxCors', {
+      type: apigateway.ResponseType.DEFAULT_5XX,
+      responseHeaders: corsErrorHeaders,
+    });
+
     const auth = { authorizer: lambdaAuthorizer };
 
     const createFn = (id: string, folder: string, grantedTables: cdk.aws_dynamodb.ITable[]) => {

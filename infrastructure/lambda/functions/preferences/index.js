@@ -37,6 +37,11 @@ const SETTINGS_TABLE = process.env.SETTINGS_TABLE;
 const CONCERTS_TABLE = process.env.CONCERTS_TABLE;
 const ASSIGNMENTS_TABLE = process.env.ASSIGNMENTS_TABLE;
 
+// Per-request ceiling for outbound Microsoft Graph calls. Node's fetch() has no
+// default timeout, so without this a single stalled call blocks the whole sync
+// until the Lambda is killed — surfacing to the browser as "Failed to fetch".
+const GRAPH_FETCH_TIMEOUT_MS = 8000;
+
 const NEW_EMPLOYEE_GRACE_DAYS = 21;
 
 const res = (statusCode, body) => ({
@@ -612,7 +617,14 @@ async function getUserPreferences(userId, event) {
 // Acquire an app-only Graph token via the client-credentials flow. Requires the
 // app registration to hold the `User.Read.All` application permission (admin
 // consent) and the secret to be present in SSM. Returns null when unconfigured.
+// The token is cached across warm invocations until shortly before it expires so
+// repeated syncs don't re-hit the token endpoint. A hung request can't stall the
+// whole sync — it's bounded by GRAPH_FETCH_TIMEOUT_MS.
+let _graphTokenCache = { token: null, expiresAt: 0 };
 async function getGraphAppToken() {
+  if (_graphTokenCache.token && Date.now() < _graphTokenCache.expiresAt) {
+    return _graphTokenCache.token;
+  }
   const tenant = process.env.AZURE_TENANT_ID;
   const clientId = process.env.AZURE_CLIENT_ID;
   const clientSecret = await getAzureClientSecret();
@@ -624,16 +636,28 @@ async function getGraphAppToken() {
     scope: 'https://graph.microsoft.com/.default',
     grant_type: 'client_credentials',
   });
-  const resp = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params.toString(),
-  });
+  let resp;
+  try {
+    resp = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+      signal: AbortSignal.timeout(GRAPH_FETCH_TIMEOUT_MS),
+    });
+  } catch (e) {
+    console.error('Graph token request errored:', e.name, e.message);
+    return null;
+  }
   if (!resp.ok) {
     console.error('Graph token request failed:', resp.status, await resp.text());
     return null;
   }
   const data = await resp.json();
+  if (data.access_token) {
+    // Cache until 5 min before expiry (expires_in is seconds; default ~3600).
+    const ttlMs = Math.max(0, ((data.expires_in || 3600) - 300) * 1000);
+    _graphTokenCache = { token: data.access_token, expiresAt: Date.now() + ttlMs };
+  }
   return data.access_token || null;
 }
 
@@ -673,6 +697,7 @@ async function syncTerminations(event) {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ requests }),
+        signal: AbortSignal.timeout(GRAPH_FETCH_TIMEOUT_MS),
       });
       if (!resp.ok) {
         const text = await resp.text();
